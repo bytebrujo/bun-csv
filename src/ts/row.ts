@@ -1,13 +1,46 @@
 /**
- * CSVRow - Lazy row accessor
+ * CSVRow - Lazy row accessor with batch FFI optimization
  */
 
-import { loadNativeLibrary, readString } from "./ffi";
+import { loadNativeLibrary, MAX_BATCH_FIELDS, type NativeLib } from "./ffi";
+import { toArrayBuffer, type Pointer } from "bun:ffi";
 import type { Schema, SchemaField, ColumnType } from "./types";
+
+/** Module-level cached library reference */
+let cachedLib: NativeLib | null = null;
+
+/** Module-level reusable TextDecoder */
+const TEXT_DECODER = new TextDecoder();
+
+/** Module-level length buffer for unescaped fields */
+const LENGTH_BUFFER = new Uint8Array(8);
+
+/** Get cached library reference */
+function getLib(): NativeLib {
+  if (!cachedLib) {
+    cachedLib = loadNativeLibrary();
+  }
+  return cachedLib;
+}
+
+/** Batch row data loaded in one FFI call (old method with pointers) */
+interface BatchData {
+  fieldCount: number;
+  ptrs: BigUint64Array;
+  lens: Uint32Array;
+  flags: Uint8Array;
+}
+
+/** Row data loaded directly with all strings (new optimized method) */
+interface RowStringData {
+  fieldCount: number;
+  strings: string[];
+}
 
 /**
  * Represents a single row in the CSV file.
  * Fields are lazily decoded from the native parser only when accessed.
+ * Uses batch FFI to load all field pointers in one call for efficiency.
  */
 export class CSVRow<T = Record<string, string>> {
   private handle: number;
@@ -15,6 +48,8 @@ export class CSVRow<T = Record<string, string>> {
   private headers: Map<string, number> | null;
   private schema: Schema<T> | null;
   private cache: Map<number, string>;
+  private batchData: BatchData | null = null;
+  private rowStringData: RowStringData | null = null;
 
   constructor(
     handle: number,
@@ -30,9 +65,109 @@ export class CSVRow<T = Record<string, string>> {
   }
 
   /**
+   * Load all field pointers in one FFI call (lazy, on first field access)
+   */
+  private loadBatch(): BatchData | null {
+    if (this.batchData !== null) {
+      return this.batchData;
+    }
+
+    const lib = getLib();
+    const batchPtr = lib.csv_get_row_batch(this.handle);
+
+    if (!batchPtr || batchPtr === 0) {
+      return null;
+    }
+
+    // BatchRowResult layout:
+    // - field_count: u32 (4 bytes)
+    // - _pad: u32 (4 bytes)
+    // - ptrs: [64]usize (64 * 8 = 512 bytes on 64-bit)
+    // - lens: [64]u32 (64 * 4 = 256 bytes)
+    // - flags: [64]u8 (64 bytes)
+    // Total: 8 + 512 + 256 + 64 = 840 bytes
+
+    const buffer = toArrayBuffer(batchPtr as Pointer, 0, 840);
+    const view = new DataView(buffer);
+
+    const fieldCount = view.getUint32(0, true);
+
+    // Read pointer array (64 * 8 bytes starting at offset 8)
+    const ptrs = new BigUint64Array(buffer, 8, MAX_BATCH_FIELDS);
+
+    // Read length array (64 * 4 bytes starting at offset 8 + 512)
+    const lens = new Uint32Array(buffer, 8 + MAX_BATCH_FIELDS * 8, MAX_BATCH_FIELDS);
+
+    // Read flags array (64 bytes starting at offset 8 + 512 + 256)
+    const flags = new Uint8Array(buffer, 8 + MAX_BATCH_FIELDS * 8 + MAX_BATCH_FIELDS * 4, MAX_BATCH_FIELDS);
+
+    this.batchData = { fieldCount, ptrs, lens, flags };
+    return this.batchData;
+  }
+
+  /**
+   * Load all field strings in one FFI call (most efficient method)
+   * Returns all strings already decoded, no additional FFI calls needed
+   */
+  private loadRowStrings(): RowStringData | null {
+    if (this.rowStringData !== null) {
+      return this.rowStringData;
+    }
+
+    const lib = getLib();
+    const resultPtr = lib.csv_get_row_data(this.handle);
+
+    if (!resultPtr || resultPtr === 0) {
+      return null;
+    }
+
+    // RowDataResult layout:
+    // - data_ptr: usize (8 bytes)
+    // - total_size: u32 (4 bytes)
+    // - field_count: u32 (4 bytes)
+    // Total: 16 bytes
+    const resultBuffer = toArrayBuffer(resultPtr as Pointer, 0, 16);
+    const resultView = new DataView(resultBuffer);
+
+    const dataPtr = resultView.getBigUint64(0, true);
+    const totalSize = resultView.getUint32(8, true);
+    const fieldCount = resultView.getUint32(12, true);
+
+    if (totalSize === 0 || fieldCount === 0) {
+      return null;
+    }
+
+    // Read the data buffer containing all field strings
+    const dataBuffer = toArrayBuffer(Number(dataPtr) as unknown as Pointer, 0, totalSize);
+    const dataView = new DataView(dataBuffer);
+    const dataBytes = new Uint8Array(dataBuffer);
+
+    // Parse fields: [u32 len][bytes][u32 len][bytes]...
+    const strings: string[] = [];
+    let offset = 0;
+
+    for (let i = 0; i < fieldCount && offset < totalSize; i++) {
+      const len = dataView.getUint32(offset, true);
+      offset += 4;
+
+      if (len === 0) {
+        strings.push("");
+      } else {
+        const strBytes = dataBytes.subarray(offset, offset + len);
+        strings.push(TEXT_DECODER.decode(strBytes));
+        offset += len;
+      }
+    }
+
+    this.rowStringData = { fieldCount, strings };
+    return this.rowStringData;
+  }
+
+  /**
    * Get raw field value by column index or name.
    * Returns null for empty unquoted fields (SQL-style NULL).
    * Automatically unescapes quoted fields (removes quotes, handles "").
+   * Uses batch FFI for efficiency - loads all field pointers in one call.
    */
   get(column: keyof T | number): string | null {
     const colIndex = this.resolveColumn(column);
@@ -42,34 +177,75 @@ export class CSVRow<T = Record<string, string>> {
       return this.cache.get(colIndex)!;
     }
 
-    const lib = loadNativeLibrary();
+    // Try batch path first (more efficient for multiple field access)
+    const batch = this.loadBatch();
 
-    // Check if field needs unescaping (starts with quote)
+    if (batch && colIndex < batch.fieldCount) {
+      const ptr = batch.ptrs[colIndex]!;
+      const len = batch.lens[colIndex]!;
+      const needsUnescape = (batch.flags[colIndex]! & 1) !== 0;
+
+      if (ptr === 0n) {
+        return null;
+      }
+
+      let value: string;
+
+      if (needsUnescape) {
+        // Need to call native unescape function for quoted fields
+        const lib = getLib();
+        const unescapedPtr = lib.csv_get_field_unescaped(this.handle, colIndex, LENGTH_BUFFER);
+
+        if (unescapedPtr === null || unescapedPtr === 0) {
+          return null;
+        }
+
+        const dataView = new DataView(LENGTH_BUFFER.buffer);
+        const unescapedLen = Number(dataView.getBigUint64(0, true));
+
+        if (unescapedLen === 0) {
+          value = "";
+        } else {
+          const buffer = toArrayBuffer(unescapedPtr as Pointer, 0, unescapedLen);
+          value = TEXT_DECODER.decode(buffer);
+        }
+      } else {
+        // SQL-style NULL: empty unquoted field returns null
+        if (len === 0) {
+          return null;
+        }
+
+        const buffer = toArrayBuffer(Number(ptr) as unknown as Pointer, 0, len);
+        value = TEXT_DECODER.decode(buffer);
+      }
+
+      this.cache.set(colIndex, value);
+      return value;
+    }
+
+    // Fallback to individual FFI calls (for fields beyond MAX_BATCH_FIELDS)
+    const lib = getLib();
     const needsUnescape = lib.csv_field_needs_unescape(this.handle, colIndex);
 
     let value: string;
 
     if (needsUnescape) {
-      // Use native unescape function (handles "" -> " conversion)
-      const outLenBuf = new Uint8Array(8); // u64 for length
-      const ptr = lib.csv_get_field_unescaped(this.handle, colIndex, outLenBuf);
+      const ptr = lib.csv_get_field_unescaped(this.handle, colIndex, LENGTH_BUFFER);
 
       if (ptr === null || ptr === 0) {
         return null;
       }
 
-      // Read length from output buffer (little-endian u64)
-      const dataView = new DataView(outLenBuf.buffer);
+      const dataView = new DataView(LENGTH_BUFFER.buffer);
       const len = Number(dataView.getBigUint64(0, true));
 
       if (len === 0) {
-        // Quoted empty field "" returns empty string (not null)
         value = "";
       } else {
-        value = readString(ptr, len);
+        const buffer = toArrayBuffer(ptr as Pointer, 0, len);
+        value = TEXT_DECODER.decode(buffer);
       }
     } else {
-      // No unescaping needed - get raw pointer
       const ptr = lib.csv_get_field_ptr(this.handle, colIndex);
       const len = lib.csv_get_field_len(this.handle, colIndex);
 
@@ -77,17 +253,15 @@ export class CSVRow<T = Record<string, string>> {
         return null;
       }
 
-      // SQL-style NULL: empty unquoted field returns null
       if (len === 0) {
         return null;
       }
 
-      value = readString(ptr, len);
+      const buffer = toArrayBuffer(ptr as Pointer, 0, Number(len));
+      value = TEXT_DECODER.decode(buffer);
     }
 
-    // Cache the result
     this.cache.set(colIndex, value);
-
     return value;
   }
 

@@ -72,6 +72,9 @@ pub const Parser = struct {
     // Field index for current row
     field_offsets: std.ArrayListUnmanaged(FieldLocation),
 
+    // SIMD scanner for accelerated parsing
+    simd_scanner: simd.SimdScanner,
+
     // String cache pool with limit enforcement
     string_cache: std.StringHashMap([]const u8),
     cache_size: usize,
@@ -157,6 +160,7 @@ pub const Parser = struct {
             .current_row = 0,
             .in_quote = false,
             .field_offsets = .{},
+            .simd_scanner = simd.SimdScanner.init(config.delimiter, config.quote_char),
             .string_cache = std.StringHashMap([]const u8).init(allocator),
             .cache_size = 0,
             .cache_status = .ok,
@@ -224,6 +228,7 @@ pub const Parser = struct {
             .current_row = 0,
             .in_quote = false,
             .field_offsets = .{},
+            .simd_scanner = simd.SimdScanner.init(config.delimiter, config.quote_char),
             .string_cache = std.StringHashMap([]const u8).init(allocator),
             .cache_size = 0,
             .cache_status = .ok,
@@ -248,6 +253,7 @@ pub const Parser = struct {
     }
 
     /// Advance to next row, parsing field boundaries
+    /// Uses SIMD-accelerated scanning with O(1) quote tracking
     /// Handles RFC 4180 compliant parsing including escaped quotes ("")
     pub fn nextRow(self: *Self) bool {
         if (self.is_closed or self.is_paused) return false;
@@ -256,67 +262,33 @@ pub const Parser = struct {
         // Clear previous row's field offsets
         self.field_offsets.clearRetainingCapacity();
 
-        var field_start = self.cursor;
-        var i = self.cursor;
+        // Use SIMD scanner for fast row parsing
+        const scan = self.simd_scanner.scanRowFast(self.data, self.cursor);
 
-        while (i < self.data_len) {
-            const byte = self.data[i];
-
-            if (byte == self.config.quote_char) {
-                // Check for escaped quote (two quotes in a row)
-                if (i + 1 < self.data_len and self.data[i + 1] == self.config.quote_char) {
-                    // Skip escaped quote pair
-                    i += 2;
-                    continue;
-                }
-                // Toggle quote state
-                self.in_quote = !self.in_quote;
-            } else if (!self.in_quote) {
-                if (byte == self.config.delimiter) {
-                    // End of field
-                    const field = FieldLocation{
-                        .start = field_start,
-                        .len = i - field_start,
-                        .needs_unescape = self.fieldNeedsUnescape(field_start, i),
-                    };
-                    self.field_offsets.append(self.allocator, field) catch return false;
-                    field_start = i + 1;
-                } else if (byte == '\n') {
-                    // End of row
-                    const field = FieldLocation{
-                        .start = field_start,
-                        .len = if (i > 0 and self.data[i - 1] == '\r') i - field_start - 1 else i - field_start,
-                        .needs_unescape = self.fieldNeedsUnescape(field_start, i),
-                    };
-                    self.field_offsets.append(self.allocator, field) catch return false;
-
-                    self.cursor = i + 1;
-                    self.current_row += 1;
-                    self.stats.rows_emitted += 1;
-                    self.stats.bytes_processed = self.cursor;
-                    self.in_quote = false; // Reset for next row
-                    return true;
-                }
-            }
-            i += 1;
+        if (scan.field_count == 0 and !scan.found_row) {
+            return false;
         }
 
-        // Handle last row without trailing newline
-        if (field_start < self.data_len) {
+        // Convert scan result to field offsets
+        var field_start = self.cursor;
+        for (0..scan.field_count) |i| {
+            const field_end = scan.field_ends[i];
             const field = FieldLocation{
                 .start = field_start,
-                .len = self.data_len - field_start,
-                .needs_unescape = self.fieldNeedsUnescape(field_start, self.data_len),
+                .len = field_end - field_start,
+                .needs_unescape = scan.needs_unescape[i],
             };
             self.field_offsets.append(self.allocator, field) catch return false;
-            self.cursor = self.data_len;
-            self.current_row += 1;
-            self.stats.rows_emitted += 1;
-            self.stats.bytes_processed = self.cursor;
-            return true;
+            field_start = field_end + 1;
         }
 
-        return false;
+        self.cursor = scan.row_end;
+        self.current_row += 1;
+        self.stats.rows_emitted += 1;
+        self.stats.bytes_processed = self.cursor;
+        self.in_quote = false; // Reset for next row
+
+        return true;
     }
 
     /// Check if field contains quotes that need unescaping
@@ -623,6 +595,766 @@ export fn csv_get_field_unescaped(handle: ParserHandle, col_idx: usize, out_len:
 /// Get SIMD vector width (for debugging/info)
 export fn csv_get_simd_width() usize {
     return simd.VECTOR_WIDTH;
+}
+
+/// Maximum fields in batch result (must match TypeScript)
+pub const MAX_BATCH_FIELDS: usize = 64;
+
+/// Batch row result structure for efficient FFI
+/// Packed for minimal FFI overhead - returns all field info in one call
+pub const BatchRowResult = extern struct {
+    field_count: u32,
+    _pad: u32 = 0,
+    /// Pointers to field data (absolute memory addresses)
+    ptrs: [MAX_BATCH_FIELDS]usize,
+    /// Length of each field
+    lens: [MAX_BATCH_FIELDS]u32,
+    /// Flags: bit 0 = needs_unescape
+    flags: [MAX_BATCH_FIELDS]u8,
+};
+
+/// Static batch result buffer (avoid allocation per call)
+var batch_result_buffer: BatchRowResult = undefined;
+
+/// Get all field data for current row in a single FFI call
+/// Returns pointer to static BatchRowResult, valid until next call
+/// This reduces FFI overhead from 3-5 calls per field to 1 call per row
+export fn csv_get_row_batch(handle: ParserHandle) ?*const BatchRowResult {
+    const parser: *Parser = @ptrCast(@alignCast(handle));
+
+    const field_count = parser.field_offsets.items.len;
+    if (field_count == 0) return null;
+
+    // Clamp to max fields
+    const actual_count = @min(field_count, MAX_BATCH_FIELDS);
+
+    batch_result_buffer.field_count = @intCast(actual_count);
+
+    for (0..actual_count) |i| {
+        const field = parser.field_offsets.items[i];
+        batch_result_buffer.ptrs[i] = @intFromPtr(parser.data.ptr + field.start);
+        batch_result_buffer.lens[i] = @intCast(field.len);
+        batch_result_buffer.flags[i] = if (field.needs_unescape) 1 else 0;
+    }
+
+    return &batch_result_buffer;
+}
+
+/// Maximum size for row data buffer (64KB should handle most rows)
+const ROW_DATA_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Static buffer for returning all row data in one call
+var row_data_buffer: [ROW_DATA_BUFFER_SIZE]u8 = undefined;
+
+/// Result structure for row data buffer
+pub const RowDataResult = extern struct {
+    /// Pointer to buffer containing all field data
+    data_ptr: [*]const u8,
+    /// Total size of data in buffer
+    total_size: u32,
+    /// Number of fields
+    field_count: u32,
+};
+
+var row_data_result: RowDataResult = undefined;
+
+/// Get all field strings for current row in a single buffer
+/// Format: [u32 len1][bytes1][u32 len2][bytes2]...
+/// Fields that need unescaping are processed inline
+/// Returns pointer to RowDataResult, valid until next call
+export fn csv_get_row_data(handle: ParserHandle) ?*const RowDataResult {
+    const parser: *Parser = @ptrCast(@alignCast(handle));
+
+    const field_count = parser.field_offsets.items.len;
+    if (field_count == 0) return null;
+
+    var write_pos: usize = 0;
+    const max_fields = @min(field_count, MAX_BATCH_FIELDS);
+
+    for (0..max_fields) |i| {
+        const field = parser.field_offsets.items[i];
+        const field_data = parser.data[field.start .. field.start + field.len];
+
+        if (field.needs_unescape and field_data.len >= 2 and field_data[0] == parser.config.quote_char) {
+            // Unescape inline: remove quotes and handle ""
+            const inner = field_data[1 .. field_data.len - 1];
+
+            // Calculate unescaped length first
+            var unesc_len: u32 = 0;
+            var j: usize = 0;
+            while (j < inner.len) {
+                if (inner[j] == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
+                    unesc_len += 1;
+                    j += 2;
+                } else {
+                    unesc_len += 1;
+                    j += 1;
+                }
+            }
+
+            // Check buffer space
+            if (write_pos + 4 + unesc_len > ROW_DATA_BUFFER_SIZE) return null;
+
+            // Write length
+            const len_bytes: *[4]u8 = @ptrCast(row_data_buffer[write_pos..][0..4]);
+            len_bytes.* = @bitCast(unesc_len);
+            write_pos += 4;
+
+            // Write unescaped data
+            j = 0;
+            while (j < inner.len) {
+                if (inner[j] == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
+                    row_data_buffer[write_pos] = parser.config.quote_char;
+                    write_pos += 1;
+                    j += 2;
+                } else {
+                    row_data_buffer[write_pos] = inner[j];
+                    write_pos += 1;
+                    j += 1;
+                }
+            }
+        } else {
+            // No unescaping needed - copy directly
+            const len: u32 = @intCast(field_data.len);
+
+            // Check buffer space
+            if (write_pos + 4 + len > ROW_DATA_BUFFER_SIZE) return null;
+
+            // Write length
+            const len_bytes: *[4]u8 = @ptrCast(row_data_buffer[write_pos..][0..4]);
+            len_bytes.* = @bitCast(len);
+            write_pos += 4;
+
+            // Write data
+            @memcpy(row_data_buffer[write_pos..][0..len], field_data);
+            write_pos += len;
+        }
+    }
+
+    row_data_result = RowDataResult{
+        .data_ptr = &row_data_buffer,
+        .total_size = @intCast(write_pos),
+        .field_count = @intCast(max_fields),
+    };
+
+    return &row_data_result;
+}
+
+// ============================================================================
+// Batch Row Parsing API (Option 2)
+// Parse multiple rows at once to reduce FFI overhead
+// ============================================================================
+
+/// Maximum rows in a batch
+pub const MAX_BATCH_ROWS: usize = 1000;
+
+/// Maximum total fields across all batch rows
+pub const MAX_BATCH_TOTAL_FIELDS: usize = MAX_BATCH_ROWS * 32; // Assume avg 32 fields max
+
+/// Field info in batch result
+pub const BatchFieldInfo = extern struct {
+    ptr: usize, // Pointer to field data
+    len: u32, // Field length
+    flags: u8, // bit 0 = needs_unescape
+    _pad: [3]u8 = .{ 0, 0, 0 },
+};
+
+/// Row info in batch result
+pub const BatchRowInfo = extern struct {
+    field_start_idx: u32, // Index into fields array
+    field_count: u16, // Number of fields in this row
+    _pad: u16 = 0,
+};
+
+/// Batch parsing result
+pub const BatchParseResult = extern struct {
+    rows_parsed: u32,
+    total_fields: u32,
+    has_more: u8,
+    _pad: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+};
+
+/// Static buffers for batch results
+var batch_rows: [MAX_BATCH_ROWS]BatchRowInfo = undefined;
+var batch_fields: [MAX_BATCH_TOTAL_FIELDS]BatchFieldInfo = undefined;
+var batch_parse_result: BatchParseResult = undefined;
+
+/// Parse up to max_rows rows and return all field info in one call
+/// Returns pointer to BatchParseResult, with row and field info in static buffers
+export fn csv_parse_batch(handle: ParserHandle, max_rows: u32) ?*const BatchParseResult {
+    const parser: *Parser = @ptrCast(@alignCast(handle));
+
+    if (parser.is_closed or parser.is_paused) return null;
+    if (parser.cursor >= parser.data_len) return null;
+
+    const rows_to_parse = @min(max_rows, MAX_BATCH_ROWS);
+    var rows_parsed: u32 = 0;
+    var total_fields: u32 = 0;
+
+    while (rows_parsed < rows_to_parse and parser.cursor < parser.data_len) {
+        // Parse one row using existing nextRow logic
+        if (!parser.nextRow()) break;
+
+        const field_count = parser.field_offsets.items.len;
+        if (total_fields + field_count > MAX_BATCH_TOTAL_FIELDS) {
+            // Would overflow field buffer - stop here
+            // Note: row was already parsed, so we include it
+            break;
+        }
+
+        // Record row info
+        batch_rows[rows_parsed] = BatchRowInfo{
+            .field_start_idx = total_fields,
+            .field_count = @intCast(@min(field_count, 65535)),
+        };
+
+        // Record field info
+        for (parser.field_offsets.items) |field| {
+            batch_fields[total_fields] = BatchFieldInfo{
+                .ptr = @intFromPtr(parser.data.ptr + field.start),
+                .len = @intCast(field.len),
+                .flags = if (field.needs_unescape) 1 else 0,
+            };
+            total_fields += 1;
+        }
+
+        rows_parsed += 1;
+    }
+
+    if (rows_parsed == 0) return null;
+
+    batch_parse_result = BatchParseResult{
+        .rows_parsed = rows_parsed,
+        .total_fields = total_fields,
+        .has_more = if (parser.cursor < parser.data_len) 1 else 0,
+    };
+
+    return &batch_parse_result;
+}
+
+/// Get pointer to batch rows array (valid after csv_parse_batch)
+export fn csv_get_batch_rows() [*]const BatchRowInfo {
+    return &batch_rows;
+}
+
+/// Get pointer to batch fields array (valid after csv_parse_batch)
+export fn csv_get_batch_fields() [*]const BatchFieldInfo {
+    return &batch_fields;
+}
+
+// ============================================================================
+// Full Parse API (Option 3)
+// Parse everything at once and return all data in a single buffer
+// ============================================================================
+
+/// Result header for full parse
+pub const FullParseHeader = extern struct {
+    total_rows: u32,
+    total_fields: u32,
+    data_size: u32,
+    _pad: u32 = 0,
+};
+
+/// Full parse result - all data in contiguous memory
+/// Layout: [FullParseHeader][row_field_counts: u16 * total_rows][field_offsets: u32 * total_fields][data_buffer]
+var full_parse_buffer: ?[]u8 = null;
+var full_parse_header: FullParseHeader = undefined;
+
+/// Parse entire file and return all data in one buffer
+/// Returns pointer to FullParseHeader, followed by row info, field offsets, and data
+export fn csv_parse_all(handle: ParserHandle) ?*const FullParseHeader {
+    const parser: *Parser = @ptrCast(@alignCast(handle));
+
+    if (parser.is_closed) return null;
+
+    // First pass: count rows and fields, calculate data size
+    var total_rows: u32 = 0;
+    var total_fields: u32 = 0;
+    var data_size: u32 = 0;
+
+    const start_cursor = parser.cursor;
+
+    // Count phase
+    while (parser.nextRow()) {
+        total_rows += 1;
+        const fc = parser.field_offsets.items.len;
+        total_fields += @intCast(fc);
+
+        for (parser.field_offsets.items) |field| {
+            if (field.needs_unescape and field.len >= 2) {
+                // Estimate unescaped size (remove outer quotes, "" -> ")
+                // Worst case: same length, best case: len - 2
+                data_size += @intCast(field.len);
+            } else {
+                data_size += @intCast(field.len);
+            }
+        }
+    }
+
+    if (total_rows == 0) return null;
+
+    // Calculate buffer layout (all sections 4-byte aligned)
+    // Header: 16 bytes
+    // Row field counts: 4 * total_rows bytes (u32 per row for alignment)
+    // Field offsets: 4 * total_fields bytes (u32 offset into data)
+    // Field lengths: 4 * total_fields bytes (u32 length)
+    // Data: data_size bytes
+    const header_size: usize = 16;
+    const row_counts_size: usize = @as(usize, total_rows) * 4; // Use u32 for alignment
+    const field_offsets_size: usize = @as(usize, total_fields) * 4;
+    const field_lengths_size: usize = @as(usize, total_fields) * 4;
+    const total_size = header_size + row_counts_size + field_offsets_size + field_lengths_size + data_size;
+
+    // Free previous buffer if any
+    if (full_parse_buffer) |buf| {
+        global_allocator.free(buf);
+    }
+
+    // Allocate buffer
+    full_parse_buffer = global_allocator.alloc(u8, total_size) catch return null;
+    const buf = full_parse_buffer.?;
+
+    // Reset parser to beginning
+    parser.cursor = start_cursor;
+    parser.current_row = 0;
+    parser.stats.rows_emitted = 0;
+    parser.in_quote = false;
+
+    // Write header
+    const header_ptr: *FullParseHeader = @ptrCast(@alignCast(buf.ptr));
+    header_ptr.* = FullParseHeader{
+        .total_rows = total_rows,
+        .total_fields = total_fields,
+        .data_size = data_size,
+    };
+
+    // Pointers to sections
+    const row_counts_ptr: [*]u32 = @ptrCast(@alignCast(buf.ptr + header_size));
+    const field_offsets_ptr: [*]u32 = @ptrCast(@alignCast(buf.ptr + header_size + row_counts_size));
+    const field_lengths_ptr: [*]u32 = @ptrCast(@alignCast(buf.ptr + header_size + row_counts_size + field_offsets_size));
+    const data_ptr: [*]u8 = buf.ptr + header_size + row_counts_size + field_offsets_size + field_lengths_size;
+
+    // Second pass: write data
+    var row_idx: u32 = 0;
+    var field_idx: u32 = 0;
+    var data_offset: u32 = 0;
+
+    while (parser.nextRow()) {
+        const fc: u32 = @intCast(@min(parser.field_offsets.items.len, 0xFFFFFFFF));
+        row_counts_ptr[row_idx] = fc;
+
+        for (parser.field_offsets.items) |field| {
+            const field_data = parser.data[field.start .. field.start + field.len];
+
+            if (field.needs_unescape and field_data.len >= 2 and field_data[0] == parser.config.quote_char) {
+                // Unescape: remove outer quotes, "" -> "
+                const inner = field_data[1 .. field_data.len - 1];
+                var write_len: u32 = 0;
+
+                var j: usize = 0;
+                while (j < inner.len) {
+                    if (inner[j] == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
+                        data_ptr[data_offset + write_len] = parser.config.quote_char;
+                        write_len += 1;
+                        j += 2;
+                    } else {
+                        data_ptr[data_offset + write_len] = inner[j];
+                        write_len += 1;
+                        j += 1;
+                    }
+                }
+
+                field_offsets_ptr[field_idx] = data_offset;
+                field_lengths_ptr[field_idx] = write_len;
+                data_offset += write_len;
+            } else {
+                // Copy directly
+                field_offsets_ptr[field_idx] = data_offset;
+                field_lengths_ptr[field_idx] = @intCast(field_data.len);
+                @memcpy(data_ptr[data_offset..][0..field_data.len], field_data);
+                data_offset += @intCast(field_data.len);
+            }
+
+            field_idx += 1;
+        }
+
+        row_idx += 1;
+    }
+
+    // Update header with actual data size
+    header_ptr.data_size = data_offset;
+
+    return header_ptr;
+}
+
+/// Get the full parse buffer pointer (for reading data section)
+export fn csv_get_full_parse_buffer() ?[*]const u8 {
+    if (full_parse_buffer) |buf| {
+        return buf.ptr;
+    }
+    return null;
+}
+
+/// Free the full parse buffer
+export fn csv_free_full_parse() void {
+    if (full_parse_buffer) |buf| {
+        global_allocator.free(buf);
+        full_parse_buffer = null;
+    }
+}
+
+// ============================================================================
+// JSON Parse API - Returns JSON string for single JSON.parse() call in JS
+// ============================================================================
+
+/// Buffer for JSON output
+var json_parse_buffer: ?[]u8 = null;
+
+/// Parse entire CSV and return as JSON string: [["f1","f2"],["f3","f4"],...]
+/// This allows JS to use a single JSON.parse() call which is highly optimized
+/// Returns pointer to null-terminated JSON string, or null on error
+export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
+    const parser: *Parser = @ptrCast(@alignCast(handle));
+
+    if (parser.is_closed) return null;
+
+    // Free previous buffer
+    if (json_parse_buffer) |buf| {
+        global_allocator.free(buf);
+        json_parse_buffer = null;
+    }
+
+    // Use ArrayList for dynamic JSON building (Zig 0.15 API)
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(global_allocator);
+
+    // Start array
+    json.append(global_allocator, '[') catch return null;
+
+    var first_row = true;
+    while (parser.nextRow()) {
+        if (!first_row) {
+            json.append(global_allocator, ',') catch return null;
+        }
+        first_row = false;
+
+        // Start row array
+        json.append(global_allocator, '[') catch return null;
+
+        var first_field = true;
+        for (parser.field_offsets.items) |field| {
+            if (!first_field) {
+                json.append(global_allocator, ',') catch return null;
+            }
+            first_field = false;
+
+            const field_data = parser.data[field.start .. field.start + field.len];
+
+            if (field_data.len == 0) {
+                // Empty field -> null
+                json.appendSlice(global_allocator, "null") catch return null;
+            } else if (field.needs_unescape and field_data.len >= 2 and field_data[0] == parser.config.quote_char) {
+                // Quoted field - unescape and write as JSON string
+                json.append(global_allocator, '"') catch return null;
+
+                const inner = field_data[1 .. field_data.len - 1];
+                var j: usize = 0;
+                while (j < inner.len) {
+                    const c = inner[j];
+                    if (c == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
+                        // Escaped quote "" -> "
+                        json.append(global_allocator, '"') catch return null;
+                        j += 2;
+                    } else if (c == '"') {
+                        // Escape quote for JSON
+                        json.appendSlice(global_allocator, "\\\"") catch return null;
+                        j += 1;
+                    } else if (c == '\\') {
+                        json.appendSlice(global_allocator, "\\\\") catch return null;
+                        j += 1;
+                    } else if (c == '\n') {
+                        json.appendSlice(global_allocator, "\\n") catch return null;
+                        j += 1;
+                    } else if (c == '\r') {
+                        json.appendSlice(global_allocator, "\\r") catch return null;
+                        j += 1;
+                    } else if (c == '\t') {
+                        json.appendSlice(global_allocator, "\\t") catch return null;
+                        j += 1;
+                    } else if (c < 0x20) {
+                        // Control character - use unicode escape
+                        json.appendSlice(global_allocator, "\\u00") catch return null;
+                        const hex = "0123456789abcdef";
+                        json.append(global_allocator, hex[c >> 4]) catch return null;
+                        json.append(global_allocator, hex[c & 0xf]) catch return null;
+                        j += 1;
+                    } else {
+                        json.append(global_allocator, c) catch return null;
+                        j += 1;
+                    }
+                }
+
+                json.append(global_allocator, '"') catch return null;
+            } else {
+                // Unquoted field - write as JSON string with escaping
+                json.append(global_allocator, '"') catch return null;
+
+                for (field_data) |c| {
+                    if (c == '"') {
+                        json.appendSlice(global_allocator, "\\\"") catch return null;
+                    } else if (c == '\\') {
+                        json.appendSlice(global_allocator, "\\\\") catch return null;
+                    } else if (c == '\n') {
+                        json.appendSlice(global_allocator, "\\n") catch return null;
+                    } else if (c == '\r') {
+                        json.appendSlice(global_allocator, "\\r") catch return null;
+                    } else if (c == '\t') {
+                        json.appendSlice(global_allocator, "\\t") catch return null;
+                    } else if (c < 0x20) {
+                        json.appendSlice(global_allocator, "\\u00") catch return null;
+                        const hex = "0123456789abcdef";
+                        json.append(global_allocator, hex[c >> 4]) catch return null;
+                        json.append(global_allocator, hex[c & 0xf]) catch return null;
+                    } else {
+                        json.append(global_allocator, c) catch return null;
+                    }
+                }
+
+                json.append(global_allocator, '"') catch return null;
+            }
+        }
+
+        // End row array
+        json.append(global_allocator, ']') catch return null;
+    }
+
+    // End array and null terminate
+    json.append(global_allocator, ']') catch return null;
+    json.append(global_allocator, 0) catch return null;
+
+    // Transfer ownership to static buffer
+    json_parse_buffer = json.toOwnedSlice(global_allocator) catch return null;
+
+    return json_parse_buffer.?.ptr;
+}
+
+/// Get length of JSON parse result (excluding null terminator)
+export fn csv_get_json_len() usize {
+    if (json_parse_buffer) |buf| {
+        return buf.len - 1; // Exclude null terminator
+    }
+    return 0;
+}
+
+/// Free the JSON parse buffer
+export fn csv_free_json_parse() void {
+    if (json_parse_buffer) |buf| {
+        global_allocator.free(buf);
+        json_parse_buffer = null;
+    }
+}
+
+// ============================================================================
+// Fast Parse API - Returns delimited string for minimal JS processing
+// Format: field\x00field\x00\x01field\x00field\x00\x01...
+// \x00 = field separator, \x01 = row separator
+// ============================================================================
+
+var fast_parse_buffer: ?[]u8 = null;
+var fast_parse_row_count: u32 = 0;
+
+/// Parse entire CSV and return as delimited string
+/// Much faster than JSON - no escaping needed, just concatenation
+/// Returns pointer to buffer, use csv_get_fast_parse_len() for length
+export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
+    const parser: *Parser = @ptrCast(@alignCast(handle));
+
+    if (parser.is_closed) return null;
+
+    // Free previous buffer
+    if (fast_parse_buffer) |buf| {
+        global_allocator.free(buf);
+        fast_parse_buffer = null;
+    }
+
+    // Build output buffer
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(global_allocator);
+
+    var row_count: u32 = 0;
+    var first_row = true;
+
+    while (parser.nextRow()) {
+        if (!first_row) {
+            // Row separator
+            output.append(global_allocator, 0x01) catch return null;
+        }
+        first_row = false;
+        row_count += 1;
+
+        var first_field = true;
+        for (parser.field_offsets.items) |field| {
+            if (!first_field) {
+                // Field separator
+                output.append(global_allocator, 0x00) catch return null;
+            }
+            first_field = false;
+
+            const field_data = parser.data[field.start .. field.start + field.len];
+
+            if (field.needs_unescape and field_data.len >= 2 and field_data[0] == parser.config.quote_char) {
+                // Unescape: remove outer quotes, "" -> "
+                const inner = field_data[1 .. field_data.len - 1];
+                var j: usize = 0;
+                while (j < inner.len) {
+                    const c = inner[j];
+                    if (c == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
+                        output.append(global_allocator, parser.config.quote_char) catch return null;
+                        j += 2;
+                    } else {
+                        output.append(global_allocator, c) catch return null;
+                        j += 1;
+                    }
+                }
+            } else {
+                // Copy directly
+                output.appendSlice(global_allocator, field_data) catch return null;
+            }
+        }
+    }
+
+    fast_parse_row_count = row_count;
+    fast_parse_buffer = output.toOwnedSlice(global_allocator) catch return null;
+
+    return fast_parse_buffer.?.ptr;
+}
+
+/// Get length of fast parse buffer
+export fn csv_get_fast_parse_len() usize {
+    if (fast_parse_buffer) |buf| {
+        return buf.len;
+    }
+    return 0;
+}
+
+/// Get row count from fast parse
+export fn csv_get_fast_parse_rows() u32 {
+    return fast_parse_row_count;
+}
+
+/// Free the fast parse buffer
+export fn csv_free_fast_parse() void {
+    if (fast_parse_buffer) |buf| {
+        global_allocator.free(buf);
+        fast_parse_buffer = null;
+    }
+    fast_parse_row_count = 0;
+}
+
+// ============================================================================
+// Position-based Parse API - Returns field positions for direct slicing
+// JS can slice the original file content using these positions
+// ============================================================================
+
+/// Field position info
+const FieldPos = extern struct {
+    start: u32,
+    len: u16,
+    needs_unescape: u8,
+    _pad: u8 = 0,
+};
+
+var pos_parse_field_positions: ?[]FieldPos = null;
+var pos_parse_row_field_counts: ?[]u16 = null;
+var pos_parse_row_count: u32 = 0;
+var pos_parse_field_count: u32 = 0;
+
+/// Parse and return field positions (no string copying)
+/// Returns true on success
+export fn csv_parse_positions(handle: ParserHandle) bool {
+    const parser: *Parser = @ptrCast(@alignCast(handle));
+
+    if (parser.is_closed) return false;
+
+    // Free previous
+    if (pos_parse_field_positions) |p| global_allocator.free(p);
+    if (pos_parse_row_field_counts) |p| global_allocator.free(p);
+    pos_parse_field_positions = null;
+    pos_parse_row_field_counts = null;
+
+    // First pass: count
+    var total_rows: u32 = 0;
+    var total_fields: u32 = 0;
+    const start_cursor = parser.cursor;
+
+    while (parser.nextRow()) {
+        total_rows += 1;
+        total_fields += @intCast(parser.field_offsets.items.len);
+    }
+
+    if (total_rows == 0) return false;
+
+    // Allocate
+    pos_parse_field_positions = global_allocator.alloc(FieldPos, total_fields) catch return false;
+    pos_parse_row_field_counts = global_allocator.alloc(u16, total_rows) catch {
+        global_allocator.free(pos_parse_field_positions.?);
+        pos_parse_field_positions = null;
+        return false;
+    };
+
+    // Reset and second pass
+    parser.cursor = start_cursor;
+    parser.current_row = 0;
+    parser.stats.rows_emitted = 0;
+
+    var row_idx: u32 = 0;
+    var field_idx: u32 = 0;
+
+    while (parser.nextRow()) {
+        pos_parse_row_field_counts.?[row_idx] = @intCast(@min(parser.field_offsets.items.len, 65535));
+
+        for (parser.field_offsets.items) |field| {
+            pos_parse_field_positions.?[field_idx] = FieldPos{
+                .start = @intCast(field.start),
+                .len = @intCast(@min(field.len, 65535)),
+                .needs_unescape = if (field.needs_unescape) 1 else 0,
+            };
+            field_idx += 1;
+        }
+        row_idx += 1;
+    }
+
+    pos_parse_row_count = total_rows;
+    pos_parse_field_count = total_fields;
+
+    return true;
+}
+
+export fn csv_get_positions_ptr() ?[*]const FieldPos {
+    if (pos_parse_field_positions) |p| return p.ptr;
+    return null;
+}
+
+export fn csv_get_row_counts_ptr() ?[*]const u16 {
+    if (pos_parse_row_field_counts) |p| return p.ptr;
+    return null;
+}
+
+export fn csv_get_positions_row_count() u32 {
+    return pos_parse_row_count;
+}
+
+export fn csv_get_positions_field_count() u32 {
+    return pos_parse_field_count;
+}
+
+export fn csv_free_positions() void {
+    if (pos_parse_field_positions) |p| global_allocator.free(p);
+    if (pos_parse_row_field_counts) |p| global_allocator.free(p);
+    pos_parse_field_positions = null;
+    pos_parse_row_field_counts = null;
+    pos_parse_row_count = 0;
+    pos_parse_field_count = 0;
 }
 
 /// Get current cache size in bytes

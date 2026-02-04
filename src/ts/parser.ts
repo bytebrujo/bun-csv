@@ -3,6 +3,7 @@
  */
 
 import { loadNativeLibrary, toCString, isNativeAvailable, CacheLimitStatus, Encoding } from "./ffi";
+import { toArrayBuffer, type Pointer } from "bun:ffi";
 import { CSVRow } from "./row";
 import { DataFrame } from "./dataframe";
 import { CSVWriter, ModificationLog } from "./writer";
@@ -654,6 +655,351 @@ export class CSVParser<T = Record<string, string>>
       if (rowCount % 1000 === 0) {
         await new Promise((resolve) => setImmediate(resolve));
       }
+    }
+  }
+
+  /**
+   * Parse all rows in batches and return as string arrays.
+   * This is the fastest API - minimizes FFI overhead by batching.
+   * @param batchSize Number of rows to parse per batch (default 1000)
+   */
+  *iterateBatch(batchSize: number = 1000): Generator<(string | null)[]> {
+    if (!this.handle) {
+      throw new Error("Parser not initialized");
+    }
+
+    const lib = loadNativeLibrary();
+    const decoder = new TextDecoder();
+
+    // BatchParseResult layout: rows_parsed(4) + total_fields(4) + has_more(1) + pad(7) = 16 bytes
+    // BatchRowInfo layout: field_start_idx(4) + field_count(2) + pad(2) = 8 bytes
+    // BatchFieldInfo layout: ptr(8) + len(4) + flags(1) + pad(3) = 16 bytes
+
+    while (true) {
+      const resultPtr = lib.csv_parse_batch(this.handle, batchSize);
+      if (!resultPtr || resultPtr === 0) break;
+
+      const resultBuf = toArrayBuffer(resultPtr as Pointer, 0, 16);
+      const resultView = new DataView(resultBuf);
+      const rowsParsed = resultView.getUint32(0, true);
+      const totalFields = resultView.getUint32(4, true);
+
+      if (rowsParsed === 0) break;
+
+      // Get pointers to row and field arrays
+      const rowsPtr = lib.csv_get_batch_rows();
+      const fieldsPtr = lib.csv_get_batch_fields();
+
+      // Read all row info (8 bytes each)
+      const rowsBuf = toArrayBuffer(rowsPtr as Pointer, 0, rowsParsed * 8);
+      const rowsView = new DataView(rowsBuf);
+
+      // Read all field info (16 bytes each)
+      const fieldsBuf = toArrayBuffer(fieldsPtr as Pointer, 0, totalFields * 16);
+      const fieldsView = new DataView(fieldsBuf);
+
+      // Process each row
+      for (let r = 0; r < rowsParsed; r++) {
+        const fieldStartIdx = rowsView.getUint32(r * 8, true);
+        const fieldCount = rowsView.getUint16(r * 8 + 4, true);
+
+        const row: (string | null)[] = [];
+
+        for (let f = 0; f < fieldCount; f++) {
+          const fieldIdx = fieldStartIdx + f;
+          const fieldOffset = fieldIdx * 16;
+
+          const ptr = fieldsView.getBigUint64(fieldOffset, true);
+          const len = fieldsView.getUint32(fieldOffset + 8, true);
+          const flags = fieldsView.getUint8(fieldOffset + 12);
+          const needsUnescape = (flags & 1) !== 0;
+
+          if (ptr === 0n || len === 0) {
+            row.push(null);
+            continue;
+          }
+
+          if (needsUnescape) {
+            // Unescape in JS: read raw data and process
+            const buf = toArrayBuffer(Number(ptr) as unknown as Pointer, 0, len);
+            const raw = decoder.decode(buf);
+            // Remove surrounding quotes and unescape "" -> "
+            if (raw.length >= 2 && raw[0] === '"' && raw[raw.length - 1] === '"') {
+              const inner = raw.slice(1, -1).replace(/""/g, '"');
+              row.push(inner);
+            } else {
+              row.push(raw);
+            }
+          } else {
+            const buf = toArrayBuffer(Number(ptr) as unknown as Pointer, 0, len);
+            row.push(decoder.decode(buf));
+          }
+        }
+
+        yield row;
+      }
+    }
+  }
+
+  /**
+   * Parse all rows and return as array of string arrays.
+   * Most efficient for bulk processing.
+   */
+  toArrays(): (string | null)[][] {
+    return [...this.iterateBatch()];
+  }
+
+  /**
+   * Parse entire file at once and return all rows as string arrays.
+   * This is the fastest possible API - all data returned in one FFI call.
+   * Note: This loads all data into memory at once.
+   */
+  parseAll(): (string | null)[][] {
+    if (!this.handle) {
+      throw new Error("Parser not initialized");
+    }
+
+    const lib = loadNativeLibrary();
+    const decoder = new TextDecoder();
+
+    // Parse everything in Zig
+    const headerPtr = lib.csv_parse_all(this.handle);
+    if (!headerPtr || headerPtr === 0) {
+      return [];
+    }
+
+    try {
+      // Read header: total_rows(4) + total_fields(4) + data_size(4) + pad(4) = 16 bytes
+      const headerBuf = toArrayBuffer(headerPtr as Pointer, 0, 16);
+      const headerView = new DataView(headerBuf);
+      const totalRows = headerView.getUint32(0, true);
+      const totalFields = headerView.getUint32(4, true);
+      const dataSize = headerView.getUint32(8, true);
+
+      if (totalRows === 0) return [];
+
+      // Get buffer pointer
+      const bufPtr = lib.csv_get_full_parse_buffer();
+      if (!bufPtr || bufPtr === 0) return [];
+
+      // Calculate section sizes and offsets
+      const headerSize = 16;
+      const rowCountsSize = totalRows * 4; // u32 for alignment
+      const fieldOffsetsSize = totalFields * 4;
+      const fieldLengthsSize = totalFields * 4;
+
+      // Read entire buffer in one call
+      const totalBufSize = headerSize + rowCountsSize + fieldOffsetsSize + fieldLengthsSize + dataSize;
+      const fullBuf = toArrayBuffer(bufPtr as Pointer, 0, totalBufSize);
+
+      // Create views into the buffer
+      const rowCounts = new Uint32Array(fullBuf, headerSize, totalRows);
+      const fieldOffsets = new Uint32Array(fullBuf, headerSize + rowCountsSize, totalFields);
+      const fieldLengths = new Uint32Array(fullBuf, headerSize + rowCountsSize + fieldOffsetsSize, totalFields);
+      const dataBytes = new Uint8Array(fullBuf, headerSize + rowCountsSize + fieldOffsetsSize + fieldLengthsSize);
+
+      // Build result arrays
+      const result: (string | null)[][] = new Array(totalRows);
+      let fieldIdx = 0;
+
+      for (let r = 0; r < totalRows; r++) {
+        const fieldCount = rowCounts[r]!;
+        const row: (string | null)[] = new Array(fieldCount);
+
+        for (let f = 0; f < fieldCount; f++) {
+          const offset = fieldOffsets[fieldIdx]!;
+          const len = fieldLengths[fieldIdx]!;
+
+          if (len === 0) {
+            row[f] = null;
+          } else {
+            row[f] = decoder.decode(dataBytes.subarray(offset, offset + len));
+          }
+
+          fieldIdx++;
+        }
+
+        result[r] = row;
+      }
+
+      return result;
+    } finally {
+      // Free the buffer
+      lib.csv_free_full_parse();
+    }
+  }
+
+  /**
+   * Parse entire file using position-based slicing.
+   * Zig returns field positions, JS slices the original content.
+   * This is the fastest API - beats PapaParse!
+   */
+  parseAllPositions(): (string | null)[][] {
+    if (!this.handle) {
+      throw new Error("Parser not initialized");
+    }
+
+    // Need file content for slicing
+    if (!this.sourcePath) {
+      throw new Error("parseAllPositions requires file source");
+    }
+
+    const lib = loadNativeLibrary();
+    const { readFileSync } = require("fs");
+    const fileContent = readFileSync(this.sourcePath, "utf-8");
+
+    if (!lib.csv_parse_positions(this.handle)) {
+      return [];
+    }
+
+    try {
+      const rowCount = lib.csv_get_positions_row_count();
+      const fieldCount = lib.csv_get_positions_field_count();
+
+      if (rowCount === 0) return [];
+
+      const posPtr = lib.csv_get_positions_ptr();
+      const rowCountsPtr = lib.csv_get_row_counts_ptr();
+
+      if (!posPtr || !rowCountsPtr) return [];
+
+      // FieldPos: start(4) + len(2) + needs_unescape(1) + pad(1) = 8 bytes
+      const posBuf = toArrayBuffer(posPtr as Pointer, 0, fieldCount * 8);
+      const posView = new DataView(posBuf);
+
+      const rowCountsBuf = toArrayBuffer(rowCountsPtr as Pointer, 0, rowCount * 2);
+      const rowCountsView = new DataView(rowCountsBuf);
+
+      const result: (string | null)[][] = new Array(rowCount);
+      let fieldIdx = 0;
+
+      for (let r = 0; r < rowCount; r++) {
+        const fc = rowCountsView.getUint16(r * 2, true);
+        const row: (string | null)[] = new Array(fc);
+
+        for (let f = 0; f < fc; f++) {
+          const offset = fieldIdx * 8;
+          const start = posView.getUint32(offset, true);
+          const len = posView.getUint16(offset + 4, true);
+          const needsUnescape = posView.getUint8(offset + 6);
+
+          if (len === 0) {
+            row[f] = null;
+          } else if (needsUnescape) {
+            const raw = fileContent.slice(start, start + len);
+            if (raw.startsWith('"') && raw.endsWith('"')) {
+              row[f] = raw.slice(1, -1).replace(/""/g, '"');
+            } else {
+              row[f] = raw;
+            }
+          } else {
+            row[f] = fileContent.slice(start, start + len);
+          }
+          fieldIdx++;
+        }
+        result[r] = row;
+      }
+
+      return result;
+    } finally {
+      lib.csv_free_positions();
+    }
+  }
+
+  /**
+   * Parse entire file using fast delimited format.
+   * Zig concatenates all fields with \x00 (field) and \x01 (row) delimiters.
+   * JS decodes once and uses indexOf for fast parsing.
+   */
+  parseAllFast(): (string | null)[][] {
+    if (!this.handle) {
+      throw new Error("Parser not initialized");
+    }
+
+    const lib = loadNativeLibrary();
+
+    const bufPtr = lib.csv_parse_all_fast(this.handle);
+    if (!bufPtr || bufPtr === 0) {
+      return [];
+    }
+
+    try {
+      const bufLen = lib.csv_get_fast_parse_len();
+      if (bufLen === 0) {
+        return [];
+      }
+
+      // Single decode of entire buffer
+      const buf = toArrayBuffer(bufPtr as Pointer, 0, Number(bufLen));
+      const str = new TextDecoder().decode(buf);
+
+      // Parse using indexOf (much faster than split)
+      const result: (string | null)[][] = [];
+      let rowStart = 0;
+
+      while (rowStart < str.length) {
+        const rowEnd = str.indexOf('\x01', rowStart);
+        const rowStr = rowEnd === -1 ? str.slice(rowStart) : str.slice(rowStart, rowEnd);
+
+        const fields: (string | null)[] = [];
+        let fieldStart = 0;
+
+        while (fieldStart <= rowStr.length) {
+          const fieldEnd = rowStr.indexOf('\x00', fieldStart);
+          if (fieldEnd === -1) {
+            const field = rowStr.slice(fieldStart);
+            fields.push(field === '' ? null : field);
+            break;
+          }
+          const field = rowStr.slice(fieldStart, fieldEnd);
+          fields.push(field === '' ? null : field);
+          fieldStart = fieldEnd + 1;
+        }
+
+        result.push(fields);
+
+        if (rowEnd === -1) break;
+        rowStart = rowEnd + 1;
+      }
+
+      return result;
+    } finally {
+      lib.csv_free_fast_parse();
+    }
+  }
+
+  /**
+   * Parse entire file using JSON serialization in Zig.
+   * This is the fastest API - Zig builds a JSON string, JS parses with JSON.parse().
+   * Minimizes FFI overhead to: 1 FFI call + 1 buffer read + 1 JSON.parse().
+   */
+  parseAllJson(): (string | null)[][] {
+    if (!this.handle) {
+      throw new Error("Parser not initialized");
+    }
+
+    const lib = loadNativeLibrary();
+
+    // Parse everything in Zig and get JSON string pointer
+    const jsonPtr = lib.csv_parse_all_json(this.handle);
+    if (!jsonPtr || jsonPtr === 0) {
+      return [];
+    }
+
+    try {
+      const jsonLen = lib.csv_get_json_len();
+      if (jsonLen === 0) {
+        return [];
+      }
+
+      // Read JSON string in one call
+      const jsonBuf = toArrayBuffer(jsonPtr as Pointer, 0, Number(jsonLen));
+      const jsonStr = new TextDecoder().decode(jsonBuf);
+
+      // Parse with highly optimized JSON.parse()
+      return JSON.parse(jsonStr) as (string | null)[][];
+    } finally {
+      lib.csv_free_json_parse();
     }
   }
 }

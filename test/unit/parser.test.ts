@@ -111,17 +111,17 @@ describe("CSVWriter", () => {
     unlinkSync(OUTPUT_FILE);
   });
 
-  test("quotes fields with commas", () => {
+  test("quotes fields with commas", async () => {
     const writer = new CSVWriter(OUTPUT_FILE);
     writer.writeRow(["hello, world", "normal"]);
     writer.close();
 
-    const content = Bun.file(OUTPUT_FILE).text();
+    const content = await Bun.file(OUTPUT_FILE).text();
 
     // Cleanup
     unlinkSync(OUTPUT_FILE);
 
-    expect(content).resolves.toContain('"hello, world"');
+    expect(content).toContain('"hello, world"');
   });
 });
 

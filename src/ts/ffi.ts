@@ -25,6 +25,9 @@ export enum Encoding {
   SHIFT_JIS = 7,
 }
 
+/** Maximum fields in batch result (must match Zig MAX_BATCH_FIELDS) */
+export const MAX_BATCH_FIELDS = 64;
+
 /** Native library symbols */
 export interface NativeLib {
   csv_init: (path: Uint8Array) => number | null;
@@ -41,6 +44,32 @@ export interface NativeLib {
   csv_field_needs_unescape: (handle: number, col: number) => boolean;
   csv_get_field_unescaped: (handle: number, col: number, outLen: Uint8Array) => number | null;
   csv_get_simd_width: () => number;
+  csv_get_row_batch: (handle: number) => number | null;
+  csv_get_row_data: (handle: number) => number | null;
+  // Batch parsing
+  csv_parse_batch: (handle: number, maxRows: number) => number | null;
+  csv_get_batch_rows: () => number;
+  csv_get_batch_fields: () => number;
+  // Full parse
+  csv_parse_all: (handle: number) => number | null;
+  csv_get_full_parse_buffer: () => number | null;
+  csv_free_full_parse: () => void;
+  // JSON parse - returns JSON string for single JSON.parse() call
+  csv_parse_all_json: (handle: number) => number | null;
+  csv_get_json_len: () => number;
+  csv_free_json_parse: () => void;
+  // Fast parse - returns delimited string
+  csv_parse_all_fast: (handle: number) => number | null;
+  csv_get_fast_parse_len: () => number;
+  csv_get_fast_parse_rows: () => number;
+  csv_free_fast_parse: () => void;
+  // Position parse - returns field positions for slicing
+  csv_parse_positions: (handle: number) => boolean;
+  csv_get_positions_ptr: () => number | null;
+  csv_get_row_counts_ptr: () => number | null;
+  csv_get_positions_row_count: () => number;
+  csv_get_positions_field_count: () => number;
+  csv_free_positions: () => void;
   // Cache management
   csv_get_cache_size: (handle: number) => number;
   csv_get_cache_status: (handle: number) => number;
@@ -182,6 +211,95 @@ export function loadNativeLibrary(): NativeLib {
       args: [],
       returns: FFIType.u64,
     },
+    csv_get_row_batch: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    csv_get_row_data: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    // Batch parsing
+    csv_parse_batch: {
+      args: [FFIType.ptr, FFIType.u32],
+      returns: FFIType.ptr,
+    },
+    csv_get_batch_rows: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    csv_get_batch_fields: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    // Full parse
+    csv_parse_all: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    csv_get_full_parse_buffer: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    csv_free_full_parse: {
+      args: [],
+      returns: FFIType.void,
+    },
+    // JSON parse
+    csv_parse_all_json: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    csv_get_json_len: {
+      args: [],
+      returns: FFIType.u64,
+    },
+    csv_free_json_parse: {
+      args: [],
+      returns: FFIType.void,
+    },
+    // Fast parse
+    csv_parse_all_fast: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    csv_get_fast_parse_len: {
+      args: [],
+      returns: FFIType.u64,
+    },
+    csv_get_fast_parse_rows: {
+      args: [],
+      returns: FFIType.u32,
+    },
+    csv_free_fast_parse: {
+      args: [],
+      returns: FFIType.void,
+    },
+    // Position parse
+    csv_parse_positions: {
+      args: [FFIType.ptr],
+      returns: FFIType.bool,
+    },
+    csv_get_positions_ptr: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    csv_get_row_counts_ptr: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    csv_get_positions_row_count: {
+      args: [],
+      returns: FFIType.u32,
+    },
+    csv_get_positions_field_count: {
+      args: [],
+      returns: FFIType.u32,
+    },
+    csv_free_positions: {
+      args: [],
+      returns: FFIType.void,
+    },
     // Cache management
     csv_get_cache_size: {
       args: [FFIType.ptr],
@@ -247,10 +365,15 @@ export function loadNativeLibrary(): NativeLib {
   return nativeLib;
 }
 
+/** Module-level TextDecoder for efficiency (reused across calls) */
+const SHARED_TEXT_DECODER = new TextDecoder();
+
+/** Module-level TextEncoder for efficiency */
+const SHARED_TEXT_ENCODER = new TextEncoder();
+
 /** Convert string to null-terminated C string */
 export function toCString(str: string): Uint8Array {
-  const encoder = new TextEncoder();
-  const encoded = encoder.encode(str);
+  const encoded = SHARED_TEXT_ENCODER.encode(str);
   const result = new Uint8Array(encoded.length + 1);
   result.set(encoded);
   result[encoded.length] = 0;
@@ -273,8 +396,7 @@ export function readString(pointer: Pointer | number, length: number | bigint): 
       return "";
     }
 
-    const decoder = new TextDecoder();
-    return decoder.decode(buffer);
+    return SHARED_TEXT_DECODER.decode(buffer);
   } catch (err) {
     return "";
   }
