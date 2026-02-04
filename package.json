@@ -45,7 +45,7 @@
     "benchmark:compare": "bun run test/benchmark-comparison.ts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist zig-out zig-cache wasm/*.wasm binaries",
-    "prepublishOnly": "bun run build:all",
+    "prepublishOnly": "bun run build",
     "landing:dev": "cd landing && bun run dev",
     "landing:build": "cd landing && bun run build"
   },
