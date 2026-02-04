@@ -1,0 +1,67 @@
+.code-example {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.5rem;
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.tab.active {
+  color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.code-container {
+  position: relative;
+  min-height: 350px;
+  margin-bottom: 1.5rem;
+}
+
+.code-block {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease;
+}
+
+.code-block.visible {
+  opacity: 1;
+  visibility: visible;
+  position: relative;
+}
+
+.code-block code {
+  display: block;
+  white-space: pre;
+}
+
+.code-note {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}

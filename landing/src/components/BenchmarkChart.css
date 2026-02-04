@@ -1,0 +1,71 @@
+.benchmark {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.benchmark-subtitle {
+  color: var(--text-secondary);
+  margin-bottom: 2.5rem;
+}
+
+.benchmark-table {
+  overflow-x: auto;
+  margin-bottom: 2rem;
+}
+
+.benchmark-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+.benchmark-table th,
+.benchmark-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.benchmark-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.benchmark-table td:first-child {
+  font-weight: 600;
+}
+
+.benchmark-table tr.highlight td {
+  color: var(--accent);
+}
+
+.benchmark-table tr.highlight td:first-child {
+  position: relative;
+}
+
+.benchmark-table tr.highlight td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.benchmark-note {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.benchmark-note code {
+  color: var(--text-secondary);
+}

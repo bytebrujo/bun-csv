@@ -1,0 +1,145 @@
+.hero {
+  padding: 6rem 0 5rem;
+  text-align: center;
+}
+
+.ascii-logo {
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  line-height: 1.1;
+  color: var(--accent);
+  margin-bottom: 2rem;
+  overflow-x: auto;
+  white-space: pre;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+@media (min-width: 640px) {
+  .ascii-logo {
+    font-size: 0.65rem;
+  }
+}
+
+@media (min-width: 900px) {
+  .ascii-logo {
+    font-size: 0.75rem;
+  }
+}
+
+.tagline {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  letter-spacing: -0.02em;
+}
+
+@media (min-width: 640px) {
+  .tagline {
+    font-size: 1.75rem;
+  }
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  max-width: 600px;
+  margin: 0 auto 2.5rem;
+}
+
+.install-box {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  gap: 1rem;
+  margin-bottom: 3rem;
+}
+
+.install-command {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--text-primary);
+  background: none;
+  padding: 0;
+}
+
+.copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.copy-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 3rem;
+}
+
+@media (min-width: 640px) {
+  .stats {
+    gap: 2rem;
+  }
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+@media (min-width: 640px) {
+  .stat-value {
+    font-size: 2rem;
+  }
+}
+
+.stat-label {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.stat-divider {
+  width: 1px;
+  height: 40px;
+  background: var(--border-color);
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .stat-divider {
+    display: block;
+  }
+}
+
+.cta-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}

@@ -1,0 +1,231 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Background */
+  --ds-background-100: lab(0% 0 0);
+  --ds-background-200: lab(.0177803% 0 0);
+
+  /* Grays */
+  --ds-gray-100: lab(9.288% 0 -.00000298023);
+  --ds-gray-200: lab(11.724% 0 0);
+  --ds-gray-300: lab(16.596% 0 0);
+  --ds-gray-400: lab(18.916% -.0000149012 0);
+  --ds-gray-500: lab(29.24% -.0000149012 0);
+  --ds-gray-600: lab(56.268% 0 0);
+  --ds-gray-700: lab(59.4% 0 0);
+  --ds-gray-800: lab(52.44% 0 0);
+  --ds-gray-900: lab(65.896% 0 0);
+  --ds-gray-1000: lab(93.736% 0 0);
+
+  /* Gray alpha */
+  --ds-gray-alpha-100: lab(100% 0 0 / .07);
+  --ds-gray-alpha-200: lab(100% 0 0 / .09);
+  --ds-gray-alpha-300: lab(100% 0 0 / .13);
+  --ds-gray-alpha-400: lab(100% 0 0 / .14);
+  --ds-gray-alpha-500: lab(100% 0 0 / .24);
+  --ds-gray-alpha-600: lab(100% 0 0 / .51);
+  --ds-gray-alpha-700: lab(100% 0 0 / .54);
+  --ds-gray-alpha-800: lab(100% 0 0 / .47);
+  --ds-gray-alpha-900: lab(100% 0 0 / .61);
+  --ds-gray-alpha-1000: lab(100% 0 0 / .92);
+
+  /* Semantic mappings */
+  --bg-primary: var(--ds-background-100);
+  --bg-secondary: var(--ds-gray-100);
+  --bg-tertiary: var(--ds-gray-200);
+  --border-color: var(--ds-gray-300);
+  --text-primary: var(--ds-gray-1000);
+  --text-secondary: var(--ds-gray-700);
+  --text-muted: var(--ds-gray-600);
+  --accent: var(--ds-gray-1000);
+  --accent-hover: var(--ds-gray-900);
+  --code-bg: var(--ds-background-200);
+  --font-mono: "Geist Mono", monospace;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-mono);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+code {
+  font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+pre {
+  font-family: var(--font-mono);
+  background: var(--code-bg);
+  padding: 1.25rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Container */
+.container {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+/* Section spacing */
+section {
+  padding: 5rem 0;
+}
+
+/* Headings */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  font-size: 2.5rem;
+}
+
+h2 {
+  font-size: 1.75rem;
+  margin-bottom: 1.5rem;
+}
+
+h3 {
+  font-size: 1.25rem;
+}
+
+/* Button styles */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--ds-gray-1000);
+  color: var(--ds-background-100);
+}
+
+.btn-primary:hover {
+  background: var(--ds-gray-900);
+  color: var(--ds-background-100);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+  border-color: var(--text-secondary);
+  background: var(--bg-secondary);
+}
+
+/* Card styles */
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+/* ASCII/Mono text */
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* Utility classes */
+.text-accent {
+  color: var(--accent);
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-center {
+  text-align: center;
+}
+
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.mb-3 { margin-bottom: 1.5rem; }
+.mb-4 { margin-bottom: 2rem; }
+
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+.mt-4 { margin-top: 2rem; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  h1 {
+    font-size: 1.75rem;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+  }
+
+  section {
+    padding: 3rem 0;
+  }
+
+  .container {
+    padding: 0 1rem;
+  }
+}
