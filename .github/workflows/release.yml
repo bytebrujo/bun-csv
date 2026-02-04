@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-native:
+    name: Build Native (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: x64
+            runner: ubuntu-latest
+            target: x86_64-linux-gnu
+            lib: libturbocsv.so
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-linux-gnu
+            lib: libturbocsv.so
+          - os: macos
+            arch: x64
+            runner: macos-13
+            target: x86_64-macos
+            lib: libturbocsv.dylib
+          - os: macos
+            arch: arm64
+            runner: macos-14
+            target: aarch64-macos
+            lib: libturbocsv.dylib
+          - os: windows
+            arch: x64
+            runner: windows-latest
+            target: x86_64-windows-gnu
+            lib: turbocsv.dll
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Build native library
+        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+
+      - name: Create tarball (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          mkdir -p binaries/${{ matrix.os }}-${{ matrix.arch }}
+          cp zig-out/lib/${{ matrix.lib }} binaries/${{ matrix.os }}-${{ matrix.arch }}/
+          tar -czvf turbocsv-${{ matrix.os }}-${{ matrix.arch }}.tar.gz -C binaries .
+
+      - name: Create tarball (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path binaries/${{ matrix.os }}-${{ matrix.arch }}
+          Copy-Item zig-out/lib/${{ matrix.lib }} binaries/${{ matrix.os }}-${{ matrix.arch }}/
+          Compress-Archive -Path binaries/* -DestinationPath turbocsv-${{ matrix.os }}-${{ matrix.arch }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}
+          path: turbocsv-${{ matrix.os }}-${{ matrix.arch }}.*
+          retention-days: 1
+
+  build-wasm:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Build WASM
+        run: zig build -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: wasm/turbocsv.wasm
+          retention-days: 1
+
+  publish:
+    name: Publish Release
+    needs: [build-native, build-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare binaries directory
+        run: |
+          mkdir -p binaries
+
+          # Extract Linux x64
+          if [ -f artifacts/binary-linux-x64/turbocsv-linux-x64.tar.gz ]; then
+            tar -xzf artifacts/binary-linux-x64/turbocsv-linux-x64.tar.gz -C binaries
+          fi
+
+          # Extract Linux arm64
+          if [ -f artifacts/binary-linux-arm64/turbocsv-linux-arm64.tar.gz ]; then
+            tar -xzf artifacts/binary-linux-arm64/turbocsv-linux-arm64.tar.gz -C binaries
+          fi
+
+          # Extract macOS x64
+          if [ -f artifacts/binary-macos-x64/turbocsv-macos-x64.tar.gz ]; then
+            tar -xzf artifacts/binary-macos-x64/turbocsv-macos-x64.tar.gz -C binaries
+          fi
+
+          # Extract macOS arm64
+          if [ -f artifacts/binary-macos-arm64/turbocsv-macos-arm64.tar.gz ]; then
+            tar -xzf artifacts/binary-macos-arm64/turbocsv-macos-arm64.tar.gz -C binaries
+          fi
+
+          # Extract Windows (unzip)
+          if [ -f artifacts/binary-windows-x64/turbocsv-windows-x64.zip ]; then
+            unzip -o artifacts/binary-windows-x64/turbocsv-windows-x64.zip -d binaries
+          fi
+
+          # Copy WASM
+          mkdir -p wasm
+          cp artifacts/wasm/turbocsv.wasm wasm/ || true
+
+          ls -la binaries/
+          ls -la wasm/
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build TypeScript
+        run: |
+          bun run build:ts
+          bun run build:cli
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/binary-*/turbocsv-*.*
+            artifacts/wasm/turbocsv.wasm
+          generate_release_notes: true
+
+      - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+          npm publish --access public

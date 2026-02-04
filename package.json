@@ -1,0 +1,91 @@
+{
+  "name": "turbocsv",
+  "version": "0.1.0",
+  "description": "High-performance CSV parser with SIMD acceleration, DataFrame operations, and CLI",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "turbocsv": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./testing": {
+      "import": "./dist/testing.js",
+      "types": "./dist/testing.d.ts"
+    },
+    "./wasm": {
+      "import": "./src/ts/wasm-ffi.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "wasm",
+    "binaries",
+    "scripts/postinstall.ts"
+  ],
+  "scripts": {
+    "build:zig": "zig build -Doptimize=ReleaseFast",
+    "build:zig:debug": "zig build",
+    "build:wasm": "zig build -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding",
+    "build:ts": "bun build ./src/ts/index.ts --outdir ./dist --target bun",
+    "build:cli": "bun build ./src/cli/index.ts --outdir ./dist/cli --target bun",
+    "build": "bun run build:zig && bun run build:ts && bun run build:cli",
+    "build:all": "bun run build && bun run build:wasm",
+    "postinstall": "bun scripts/postinstall.ts",
+    "test": "bun test",
+    "test:unit": "bun test test/unit",
+    "test:integration": "bun test test/integration",
+    "test:phases": "bun test/phase3-test.ts && bun test/phase4-test.ts && bun test/phase5-test.ts && bun test/phase6-test.ts",
+    "benchmark": "bun run test/benchmark.ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist zig-out zig-cache wasm/*.wasm binaries",
+    "prepublishOnly": "bun run build:all"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "keywords": [
+    "csv",
+    "parser",
+    "simd",
+    "zig",
+    "bun",
+    "dataframe",
+    "high-performance",
+    "ffi",
+    "wasm"
+  ],
+  "license": "MIT",
+  "author": "TurboCSV Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bytebrujo/bun-csv"
+  },
+  "bugs": {
+    "url": "https://github.com/bytebrujo/bun-csv/issues"
+  },
+  "homepage": "https://github.com/bytebrujo/bun-csv#readme",
+  "engines": {
+    "bun": ">=1.0.0",
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
