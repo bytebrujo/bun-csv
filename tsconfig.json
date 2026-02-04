@@ -34,5 +34,11 @@
     }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["node_modules", "dist", "zig-out"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "zig-out",
+    "test/benchmark-comparison.ts",
+    "test/phase4-test.ts"
+  ]
 }
