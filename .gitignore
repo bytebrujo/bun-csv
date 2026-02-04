@@ -23,6 +23,7 @@ binaries/
 samples/*-100000.csv
 samples/*-1000000.csv
 samples/tmdb_*.csv
+samples/benchmark-*.csv
 
 # Test artifacts
 test/fixtures/*.csv

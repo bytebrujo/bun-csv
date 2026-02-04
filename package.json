@@ -42,12 +42,17 @@
     "test:integration": "bun test test/integration",
     "test:phases": "bun test/phase3-test.ts && bun test/phase4-test.ts && bun test/phase5-test.ts && bun test/phase6-test.ts",
     "benchmark": "bun run test/benchmark.ts",
+    "benchmark:compare": "bun run test/benchmark-comparison.ts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist zig-out zig-cache wasm/*.wasm binaries",
     "prepublishOnly": "bun run build:all"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/papaparse": "^5.5.2",
+    "csv-parse": "^6.1.0",
+    "fast-csv": "^5.0.5",
+    "papaparse": "^5.5.3",
     "typescript": "^5"
   },
   "keywords": [
