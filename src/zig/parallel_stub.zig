@@ -9,8 +9,17 @@ pub const ParallelConfig = struct {
     quote_char: u8 = '"',
 };
 
+pub const ChunkBoundary = struct {
+    id: usize,
+    start: usize,
+    end: usize,
+    estimated_start_row: usize,
+};
+
 pub const ChunkProcessor = struct {
     total_rows_parsed: usize = 0,
+    total_bytes_processed: usize = 0,
+    chunks: []ChunkBoundary = &.{},
 
     pub fn init(_: std.mem.Allocator, _: []const u8, _: ParallelConfig) !*ChunkProcessor {
         return error.NotSupported;

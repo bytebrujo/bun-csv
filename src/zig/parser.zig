@@ -1137,7 +1137,7 @@ export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
     json.append( 0) catch return null;
 
     // Transfer ownership to static buffer
-    json_parse_buffer = json.toOwnedSlice(global_allocator) catch return null;
+    json_parse_buffer = json.toOwnedSlice() catch return null;
 
     return json_parse_buffer.?.ptr;
 }
@@ -1228,7 +1228,7 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
     }
 
     fast_parse_row_count = row_count;
-    fast_parse_buffer = output.toOwnedSlice(global_allocator) catch return null;
+    fast_parse_buffer = output.toOwnedSlice() catch return null;
 
     return fast_parse_buffer.?.ptr;
 }
