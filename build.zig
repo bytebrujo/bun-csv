@@ -25,7 +25,11 @@ pub fn build(b: *std.Build) void {
             }),
         });
         unit_tests.linkLibC();
-        unit_tests.linkSystemLibrary("iconv");
+
+        // Link iconv library - only needed on macOS (on Linux glibc, iconv is built into libc)
+        if (target.result.os.tag == .macos) {
+            unit_tests.linkSystemLibrary("iconv");
+        }
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
 
@@ -49,8 +53,11 @@ fn buildNative(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
     // Link libc for basic C support
     lib.linkLibC();
 
-    // Link iconv library (system library on macOS/Linux)
-    lib.linkSystemLibrary("iconv");
+    // Link iconv library - only needed on macOS (on Linux glibc, iconv is built into libc)
+    const os_tag = target.result.os.tag;
+    if (os_tag == .macos) {
+        lib.linkSystemLibrary("iconv");
+    }
 
     // Install the library
     b.installArtifact(lib);
