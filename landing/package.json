@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "dev": "vinxi dev --port 4000",
-    "build": "vinxi build",
+    "build": "vinxi build && bun scripts/fix-base-path.ts",
     "start": "vinxi start"
   },
   "dependencies": {
