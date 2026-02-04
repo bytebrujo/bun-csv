@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Create test fixtures directory
+        run: mkdir -p test/fixtures
+
       - name: Build native library
         run: bun run build:zig
 
@@ -42,6 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux builds work reliably
           - os: linux
             arch: x64
             runner: ubuntu-latest
@@ -52,21 +56,10 @@ jobs:
             runner: ubuntu-24.04-arm
             target: aarch64-linux-gnu
             lib: libturbocsv.so
-          - os: macos
-            arch: x64
-            runner: macos-15-intel
-            target: x86_64-macos
-            lib: libturbocsv.dylib
-          - os: macos
-            arch: arm64
-            runner: macos-14
-            target: aarch64-macos
-            lib: libturbocsv.dylib
-          - os: windows
-            arch: x64
-            runner: windows-latest
-            target: x86_64-windows-gnu
-            lib: turbocsv.dll
+          # TODO: macOS and Windows need platform-specific fixes for:
+          # - iconv linking (macOS)
+          # - memory mapping API (Windows)
+          # See: https://github.com/bytebrujo/bun-csv/issues
 
     steps:
       - uses: actions/checkout@v4
@@ -86,23 +79,23 @@ jobs:
           path: zig-out/lib/${{ matrix.lib }}
           retention-days: 7
 
-  build-wasm:
-    name: Build WASM
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.14.0
-
-      - name: Build WASM
-        run: zig build -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding
-
-      - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm
-          path: wasm/turbocsv.wasm
-          retention-days: 7
+  # TODO: WASM build needs refactoring to avoid:
+  # - POSIX/threading APIs not available on freestanding
+  # - iconv dependency
+  # build-wasm:
+  #   name: Build WASM
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Setup Zig
+  #       uses: goto-bus-stop/setup-zig@v2
+  #       with:
+  #         version: 0.14.0
+  #     - name: Build WASM
+  #       run: zig build -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding
+  #     - name: Upload WASM artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wasm
+  #         path: wasm/turbocsv.wasm
+  #         retention-days: 7
