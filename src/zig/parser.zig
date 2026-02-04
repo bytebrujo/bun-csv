@@ -1,8 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const simd = @import("simd.zig");
-const parallel = @import("parallel.zig");
 const iconv = @import("iconv.zig");
 pub const dataframe = @import("dataframe.zig");
+
+// Only import parallel module on platforms that support threading
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+const parallel = if (is_wasm) @import("parallel_stub.zig") else @import("parallel.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -1024,27 +1028,27 @@ export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
         json_parse_buffer = null;
     }
 
-    // Use ArrayList for dynamic JSON building (Zig 0.15 API)
-    var json: std.ArrayList(u8) = .empty;
-    defer json.deinit(global_allocator);
+    // Use ArrayList for dynamic JSON building
+    var json = std.ArrayList(u8).init(global_allocator);
+    defer json.deinit();
 
     // Start array
-    json.append(global_allocator, '[') catch return null;
+    json.append( '[') catch return null;
 
     var first_row = true;
     while (parser.nextRow()) {
         if (!first_row) {
-            json.append(global_allocator, ',') catch return null;
+            json.append( ',') catch return null;
         }
         first_row = false;
 
         // Start row array
-        json.append(global_allocator, '[') catch return null;
+        json.append( '[') catch return null;
 
         var first_field = true;
         for (parser.field_offsets.items) |field| {
             if (!first_field) {
-                json.append(global_allocator, ',') catch return null;
+                json.append( ',') catch return null;
             }
             first_field = false;
 
@@ -1052,10 +1056,10 @@ export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
 
             if (field_data.len == 0) {
                 // Empty field -> null
-                json.appendSlice(global_allocator, "null") catch return null;
+                json.appendSlice( "null") catch return null;
             } else if (field.needs_unescape and field_data.len >= 2 and field_data[0] == parser.config.quote_char) {
                 // Quoted field - unescape and write as JSON string
-                json.append(global_allocator, '"') catch return null;
+                json.append( '"') catch return null;
 
                 const inner = field_data[1 .. field_data.len - 1];
                 var j: usize = 0;
@@ -1063,74 +1067,74 @@ export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
                     const c = inner[j];
                     if (c == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
                         // Escaped quote "" -> "
-                        json.append(global_allocator, '"') catch return null;
+                        json.append( '"') catch return null;
                         j += 2;
                     } else if (c == '"') {
                         // Escape quote for JSON
-                        json.appendSlice(global_allocator, "\\\"") catch return null;
+                        json.appendSlice( "\\\"") catch return null;
                         j += 1;
                     } else if (c == '\\') {
-                        json.appendSlice(global_allocator, "\\\\") catch return null;
+                        json.appendSlice( "\\\\") catch return null;
                         j += 1;
                     } else if (c == '\n') {
-                        json.appendSlice(global_allocator, "\\n") catch return null;
+                        json.appendSlice( "\\n") catch return null;
                         j += 1;
                     } else if (c == '\r') {
-                        json.appendSlice(global_allocator, "\\r") catch return null;
+                        json.appendSlice( "\\r") catch return null;
                         j += 1;
                     } else if (c == '\t') {
-                        json.appendSlice(global_allocator, "\\t") catch return null;
+                        json.appendSlice( "\\t") catch return null;
                         j += 1;
                     } else if (c < 0x20) {
                         // Control character - use unicode escape
-                        json.appendSlice(global_allocator, "\\u00") catch return null;
+                        json.appendSlice( "\\u00") catch return null;
                         const hex = "0123456789abcdef";
-                        json.append(global_allocator, hex[c >> 4]) catch return null;
-                        json.append(global_allocator, hex[c & 0xf]) catch return null;
+                        json.append( hex[c >> 4]) catch return null;
+                        json.append( hex[c & 0xf]) catch return null;
                         j += 1;
                     } else {
-                        json.append(global_allocator, c) catch return null;
+                        json.append( c) catch return null;
                         j += 1;
                     }
                 }
 
-                json.append(global_allocator, '"') catch return null;
+                json.append( '"') catch return null;
             } else {
                 // Unquoted field - write as JSON string with escaping
-                json.append(global_allocator, '"') catch return null;
+                json.append( '"') catch return null;
 
                 for (field_data) |c| {
                     if (c == '"') {
-                        json.appendSlice(global_allocator, "\\\"") catch return null;
+                        json.appendSlice( "\\\"") catch return null;
                     } else if (c == '\\') {
-                        json.appendSlice(global_allocator, "\\\\") catch return null;
+                        json.appendSlice( "\\\\") catch return null;
                     } else if (c == '\n') {
-                        json.appendSlice(global_allocator, "\\n") catch return null;
+                        json.appendSlice( "\\n") catch return null;
                     } else if (c == '\r') {
-                        json.appendSlice(global_allocator, "\\r") catch return null;
+                        json.appendSlice( "\\r") catch return null;
                     } else if (c == '\t') {
-                        json.appendSlice(global_allocator, "\\t") catch return null;
+                        json.appendSlice( "\\t") catch return null;
                     } else if (c < 0x20) {
-                        json.appendSlice(global_allocator, "\\u00") catch return null;
+                        json.appendSlice( "\\u00") catch return null;
                         const hex = "0123456789abcdef";
-                        json.append(global_allocator, hex[c >> 4]) catch return null;
-                        json.append(global_allocator, hex[c & 0xf]) catch return null;
+                        json.append( hex[c >> 4]) catch return null;
+                        json.append( hex[c & 0xf]) catch return null;
                     } else {
-                        json.append(global_allocator, c) catch return null;
+                        json.append( c) catch return null;
                     }
                 }
 
-                json.append(global_allocator, '"') catch return null;
+                json.append( '"') catch return null;
             }
         }
 
         // End row array
-        json.append(global_allocator, ']') catch return null;
+        json.append( ']') catch return null;
     }
 
     // End array and null terminate
-    json.append(global_allocator, ']') catch return null;
-    json.append(global_allocator, 0) catch return null;
+    json.append( ']') catch return null;
+    json.append( 0) catch return null;
 
     // Transfer ownership to static buffer
     json_parse_buffer = json.toOwnedSlice(global_allocator) catch return null;
@@ -1178,8 +1182,8 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
     }
 
     // Build output buffer
-    var output: std.ArrayList(u8) = .empty;
-    defer output.deinit(global_allocator);
+    var output = std.ArrayList(u8).init(global_allocator);
+    defer output.deinit();
 
     var row_count: u32 = 0;
     var first_row = true;
@@ -1187,7 +1191,7 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
     while (parser.nextRow()) {
         if (!first_row) {
             // Row separator
-            output.append(global_allocator, 0x01) catch return null;
+            output.append( 0x01) catch return null;
         }
         first_row = false;
         row_count += 1;
@@ -1196,7 +1200,7 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
         for (parser.field_offsets.items) |field| {
             if (!first_field) {
                 // Field separator
-                output.append(global_allocator, 0x00) catch return null;
+                output.append( 0x00) catch return null;
             }
             first_field = false;
 
@@ -1209,16 +1213,16 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
                 while (j < inner.len) {
                     const c = inner[j];
                     if (c == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
-                        output.append(global_allocator, parser.config.quote_char) catch return null;
+                        output.append( parser.config.quote_char) catch return null;
                         j += 2;
                     } else {
-                        output.append(global_allocator, c) catch return null;
+                        output.append( c) catch return null;
                         j += 1;
                     }
                 }
             } else {
                 // Copy directly
-                output.appendSlice(global_allocator, field_data) catch return null;
+                output.appendSlice( field_data) catch return null;
             }
         }
     }
@@ -1395,6 +1399,9 @@ export fn csv_set_cache_callback(handle: ParserHandle, callback: CacheWarningCal
 
 /// Get optimal thread count for parallel processing
 export fn csv_get_optimal_thread_count(data_len: usize) usize {
+    // WASM doesn't support threading
+    if (is_wasm) return 1;
+
     const cpu_count = std.Thread.getCpuCount() catch 4;
 
     if (data_len < 100 * 1024 * 1024) return 1;

@@ -54,7 +54,7 @@ jobs:
             lib: libturbocsv.so
           - os: macos
             arch: x64
-            runner: macos-13
+            runner: macos-15-intel
             target: x86_64-macos
             lib: libturbocsv.dylib
           - os: macos

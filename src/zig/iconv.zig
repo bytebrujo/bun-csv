@@ -1,7 +1,17 @@
 const std = @import("std");
-const c = @cImport({
+const builtin = @import("builtin");
+
+// Only import iconv on platforms that support it (POSIX systems)
+const has_iconv = switch (builtin.os.tag) {
+    .macos, .linux, .freebsd, .netbsd, .openbsd => true,
+    else => false,
+};
+
+const c = if (has_iconv) @cImport({
     @cInclude("iconv.h");
-});
+}) else struct {
+    pub const iconv_t = *anyopaque;
+};
 
 /// Supported encodings
 pub const Encoding = enum {
@@ -73,6 +83,10 @@ pub const Transcoder = struct {
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, from: Encoding, to: Encoding) !*Self {
+        if (!has_iconv) {
+            return error.IconvNotAvailable;
+        }
+
         const handle = c.iconv_open(to.toIconvName(), from.toIconvName());
         if (handle == @as(c.iconv_t, @ptrFromInt(@as(usize, @bitCast(@as(isize, -1)))))) {
             return error.IconvOpenFailed;
@@ -91,6 +105,10 @@ pub const Transcoder = struct {
 
     /// Transcode data from source to target encoding
     pub fn transcode(self: *Self, input: []const u8) ![]u8 {
+        if (!has_iconv) {
+            return error.IconvNotAvailable;
+        }
+
         // Estimate output size (UTF-8 can be up to 4x the input for some encodings)
         const max_output = input.len * 4;
         var output = try self.allocator.alloc(u8, max_output);
@@ -115,11 +133,15 @@ pub const Transcoder = struct {
 
     /// Reset transcoder state for new input
     pub fn reset(self: *Self) void {
-        _ = c.iconv(self.handle, null, null, null, null);
+        if (has_iconv) {
+            _ = c.iconv(self.handle, null, null, null, null);
+        }
     }
 
     pub fn deinit(self: *Self) void {
-        _ = c.iconv_close(self.handle);
+        if (has_iconv) {
+            _ = c.iconv_close(self.handle);
+        }
         self.allocator.destroy(self);
     }
 };
