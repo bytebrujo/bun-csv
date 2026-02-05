@@ -350,17 +350,6 @@ turbocsv/
 └── binaries/          # Native binaries (downloaded)
 ```
 
-### Cross-Platform Memory Mapping
-
-The parser uses memory-mapped files for efficient large file handling. Platform-specific implementations are abstracted in `src/zig/mmap.zig`:
-
-| Platform | Implementation |
-|----------|----------------|
-| Linux/macOS | `std.posix.mmap` / `munmap` |
-| Windows | `CreateFileMappingW` / `MapViewOfFile` via kernel32 externs |
-
-This allows zero-copy file access across all supported platforms while maintaining a unified API.
-
 ## License
 
 MIT
