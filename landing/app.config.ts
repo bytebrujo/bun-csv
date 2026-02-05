@@ -8,8 +8,6 @@ export default defineConfig({
       routes: ["/"],
     },
     preset: "static",
-  },
-  vite: {
-    base: "/bun-csv/",
+    baseURL: process.env.BASE_URL || "/",
   },
 });
