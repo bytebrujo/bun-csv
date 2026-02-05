@@ -62,12 +62,12 @@ jobs:
             runner: macos-latest
             target: ""
             lib: libturbocsv.dylib
-          # TODO: Windows needs mmap abstraction (std.posix.mmap not available)
-          # - os: windows
-          #   arch: x64
-          #   runner: windows-latest
-          #   target: x86_64-windows-gnu
-          #   lib: turbocsv.dll
+          # Windows
+          - os: windows
+            arch: x64
+            runner: windows-latest
+            target: x86_64-windows-gnu
+            lib: turbocsv.dll
 
     steps:
       - uses: actions/checkout@v4

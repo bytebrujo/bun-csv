@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const simd = @import("simd.zig");
 const iconv = @import("iconv.zig");
+const mmap = @import("mmap.zig");
 pub const dataframe = @import("dataframe.zig");
 
 // Only import parallel module on platforms that support threading
@@ -67,6 +68,7 @@ pub const Parser = struct {
     data: []const u8,
     data_len: usize,
     file_handle: ?std.fs.File,
+    mapped_file: ?mmap.MappedFile,
 
     // Current parsing state
     cursor: usize,
@@ -111,14 +113,9 @@ pub const Parser = struct {
         const mtime = stat.mtime;
 
         // Memory map the file
-        const mapped_data = try std.posix.mmap(
-            null,
-            file_size,
-            std.posix.PROT.READ,
-            .{ .TYPE = .PRIVATE },
-            file.handle,
-            0,
-        );
+        const mapped_file = try mmap.MappedFile.init(file, file_size);
+        errdefer mapped_file.deinit();
+        const mapped_data = mapped_file.data;
 
         // Detect or use specified encoding
         var actual_encoding = config.encoding;
@@ -160,6 +157,7 @@ pub const Parser = struct {
             .data = final_data,
             .data_len = final_data.len,
             .file_handle = file,
+            .mapped_file = mapped_file,
             .cursor = 0,
             .current_row = 0,
             .in_quote = false,
@@ -228,6 +226,7 @@ pub const Parser = struct {
             .data = final_data,
             .data_len = final_data.len,
             .file_handle = null,
+            .mapped_file = null,
             .cursor = 0,
             .current_row = 0,
             .in_quote = false,
@@ -375,26 +374,13 @@ pub const Parser = struct {
             t.deinit();
         }
 
-        // Unmap memory if from file
-        if (self.file_handle) |file| {
-            // We need to unmap using the original file size
-            // The data pointer might have been adjusted for BOM or transcoding
-            // but we stored the original file_size
-            const map_size = self.file_size;
-            if (map_size > 0) {
-                // Calculate the original mmap base address
-                // If transcoded, data points to transcoded buffer (already freed above)
-                // If BOM skipped, data points into mmap + offset
-                // We need to unmap from the file start
-                if (self.transcoded_data == null) {
-                    // Data is still mmap'd (possibly with BOM offset)
-                    // Need to find original base
-                    const bom_offset = self.file_size - self.data_len;
-                    const base_ptr = self.data.ptr - bom_offset;
-                    const aligned_data: []align(std.heap.page_size_min) const u8 = @alignCast(@as([*]const u8, @ptrCast(base_ptr))[0..self.file_size]);
-                    std.posix.munmap(aligned_data);
-                }
+        // Unmap memory and close file if from file
+        if (self.mapped_file) |mapped_file| {
+            if (self.transcoded_data == null) {
+                mapped_file.deinit();
             }
+        }
+        if (self.file_handle) |file| {
             file.close();
         }
 

@@ -33,12 +33,12 @@ jobs:
             runner: macos-latest
             target: ""
             lib: libturbocsv.dylib
-          # TODO: Windows needs mmap abstraction (std.posix.mmap not available)
-          # - os: windows
-          #   arch: x64
-          #   runner: windows-latest
-          #   target: x86_64-windows-gnu
-          #   lib: turbocsv.dll
+          # Windows
+          - os: windows
+            arch: x64
+            runner: windows-latest
+            target: x86_64-windows-gnu
+            lib: turbocsv.dll
 
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +102,7 @@ jobs:
           mkdir -p binaries
 
           # Extract all platform tarballs
-          for platform in linux-x64 linux-arm64 macos-arm64; do
+          for platform in linux-x64 linux-arm64 macos-arm64 windows-x64; do
             if [ -f "artifacts/binary-${platform}/turbocsv-${platform}.tar.gz" ]; then
               tar -xzf "artifacts/binary-${platform}/turbocsv-${platform}.tar.gz" -C binaries
             fi
