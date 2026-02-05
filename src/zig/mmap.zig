@@ -1,6 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-
 //! Cross-Platform Memory Mapping
 //!
 //! Provides a unified API for memory-mapped file access across platforms:
@@ -17,6 +14,9 @@ const builtin = @import("builtin");
 //! // Access file contents via mapped.data slice
 //! const first_byte = mapped.data[0];
 //! ```
+
+const std = @import("std");
+const builtin = @import("builtin");
 
 // Windows API declarations (not in Zig stdlib)
 const win32 = if (builtin.os.tag == .windows) struct {
