@@ -43,7 +43,7 @@ parser.close();`,
   {
     id: "cli",
     label: "CLI",
-    lang: "bash",
+    lang: "shellscript",
     code: `# Count rows
 turbocsv count data.csv
 
@@ -69,7 +69,7 @@ export default function CodeExample() {
     const { createHighlighter } = await import("shiki");
     const highlighter = await createHighlighter({
       themes: ["github-dark"],
-      langs: ["typescript", "bash"],
+      langs: ["typescript", "shellscript"],
     });
 
     const highlighted: Record<string, string> = {};
