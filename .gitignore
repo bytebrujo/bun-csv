@@ -43,3 +43,6 @@ npm-debug.log*
 tmp/
 temp/
 *.tmp
+
+# Private documentation
+spec.md
