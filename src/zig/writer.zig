@@ -265,12 +265,12 @@ pub const ModificationLog = struct {
 // ============================================================================
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
+const ffi_allocator = gpa.allocator();
 
 /// Create writer to file
 export fn csv_writer_create(path_ptr: [*c]const u8) ?*anyopaque {
     const path = std.mem.span(path_ptr);
-    const writer = Writer.initToFile(allocator, path, .{}) catch return null;
+    const writer = Writer.initToFile(ffi_allocator, path, .{}) catch return null;
     return @ptrCast(writer);
 }
 

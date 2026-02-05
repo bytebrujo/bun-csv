@@ -55,16 +55,10 @@ fn buildNative(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
     // Link libc for basic C support
     lib.linkLibC();
 
-    // Link iconv library - only needed on macOS when building truly natively
+    // Link iconv library on macOS (required for character encoding support)
     // On Linux (glibc), iconv is built into libc
-    // When cross-compiling (or specifying explicit target), iconv will resolve at runtime
     const target_os = target.result.os.tag;
-    const target_arch = target.result.cpu.arch;
-    const host_os = b.graph.host.result.os.tag;
-    const host_arch = b.graph.host.result.cpu.arch;
-    const is_truly_native = target_os == host_os and target_arch == host_arch and target.query.isNative();
-
-    if (target_os == .macos and is_truly_native) {
+    if (target_os == .macos) {
         lib.linkSystemLibrary("iconv");
     }
 
