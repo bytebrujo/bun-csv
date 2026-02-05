@@ -1,10 +1,11 @@
-import { createSignal, For } from "solid-js";
+import { createSignal, createEffect, For, Show, onMount } from "solid-js";
 import "./CodeExample.css";
 
 const tabs = [
   {
     id: "basic",
     label: "Basic Parsing",
+    lang: "typescript",
     code: `import { CSVParser } from "turbocsv";
 
 const parser = new CSVParser("data.csv");
@@ -18,6 +19,7 @@ parser.close();`,
   {
     id: "dataframe",
     label: "DataFrame",
+    lang: "typescript",
     code: `import { CSVParser } from "turbocsv";
 
 const parser = new CSVParser("data.csv");
@@ -41,6 +43,7 @@ parser.close();`,
   {
     id: "cli",
     label: "CLI",
+    lang: "bash",
     code: `# Count rows
 turbocsv count data.csv
 
@@ -60,6 +63,24 @@ turbocsv convert --to json data.csv -o data.json`,
 
 export default function CodeExample() {
   const [activeTab, setActiveTab] = createSignal("basic");
+  const [highlightedCode, setHighlightedCode] = createSignal<Record<string, string>>({});
+
+  onMount(async () => {
+    const { createHighlighter } = await import("shiki");
+    const highlighter = await createHighlighter({
+      themes: ["github-dark"],
+      langs: ["typescript", "bash"],
+    });
+
+    const highlighted: Record<string, string> = {};
+    for (const tab of tabs) {
+      highlighted[tab.id] = highlighter.codeToHtml(tab.code, {
+        lang: tab.lang,
+        theme: "github-dark",
+      });
+    }
+    setHighlightedCode(highlighted);
+  });
 
   return (
     <section class="code-example" id="code">
@@ -82,11 +103,20 @@ export default function CodeExample() {
         <div class="code-container">
           <For each={tabs}>
             {(tab) => (
-              <pre
+              <div
                 class={`code-block ${activeTab() === tab.id ? "visible" : ""}`}
               >
-                <code>{tab.code}</code>
-              </pre>
+                <Show
+                  when={highlightedCode()[tab.id]}
+                  fallback={
+                    <pre>
+                      <code>{tab.code}</code>
+                    </pre>
+                  }
+                >
+                  <div innerHTML={highlightedCode()[tab.id]} />
+                </Show>
+              </div>
             )}
           </For>
         </div>
