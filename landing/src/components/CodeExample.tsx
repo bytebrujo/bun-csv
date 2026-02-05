@@ -65,10 +65,6 @@ export default function CodeExample() {
   const [activeTab, setActiveTab] = createSignal("basic");
   const [highlightedCode, setHighlightedCode] = createSignal<Record<string, string>>({});
 
-  const handleTabClick = (tabId: string) => {
-    setActiveTab(tabId);
-  };
-
   onMount(async () => {
     const { createHighlighter } = await import("shiki");
     const highlighter = await createHighlighter({
@@ -95,9 +91,9 @@ export default function CodeExample() {
           <For each={tabs}>
             {(tab) => (
               <button
-                type="button"
-                class={`tab ${activeTab() === tab.id ? "active" : ""}`}
-                onClick={[handleTabClick, tab.id]}
+                class="tab"
+                classList={{ active: activeTab() === tab.id }}
+                onClick={() => setActiveTab(tab.id)}
               >
                 {tab.label}
               </button>
@@ -109,7 +105,8 @@ export default function CodeExample() {
           <For each={tabs}>
             {(tab) => (
               <div
-                class={`code-block ${activeTab() === tab.id ? "visible" : ""}`}
+                class="code-block"
+                classList={{ visible: activeTab() === tab.id }}
               >
                 <Show
                   when={highlightedCode()[tab.id]}
