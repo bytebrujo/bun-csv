@@ -29,11 +29,6 @@ jobs:
             lib: libturbocsv.so
           # macOS - build natively (no target flag) to use system iconv
           - os: macos
-            arch: x64
-            runner: macos-13
-            target: ""
-            lib: libturbocsv.dylib
-          - os: macos
             arch: arm64
             runner: macos-latest
             target: ""
@@ -107,7 +102,7 @@ jobs:
           mkdir -p binaries
 
           # Extract all platform tarballs
-          for platform in linux-x64 linux-arm64 macos-x64 macos-arm64; do
+          for platform in linux-x64 linux-arm64 macos-arm64; do
             if [ -f "artifacts/binary-${platform}/turbocsv-${platform}.tar.gz" ]; then
               tar -xzf "artifacts/binary-${platform}/turbocsv-${platform}.tar.gz" -C binaries
             fi

@@ -58,11 +58,6 @@ jobs:
             lib: libturbocsv.so
           # macOS - build natively (no target flag) to use system iconv
           - os: macos
-            arch: x64
-            runner: macos-13
-            target: ""
-            lib: libturbocsv.dylib
-          - os: macos
             arch: arm64
             runner: macos-latest
             target: ""
