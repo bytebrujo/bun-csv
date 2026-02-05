@@ -9,7 +9,7 @@ export default createHandler(() => (
           <meta charset="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
           <meta name="description" content="High-performance CSV parser with SIMD acceleration, DataFrame operations, and CLI. Built with Zig for native performance." />
-          <link rel="icon" href="/bun-csv/favicon.svg" type="image/svg+xml" />
+          <link rel="icon" href="/bun-csv/favicon.ico" type="image/x-icon" />
 
           {/* Open Graph / Social Media */}
           <meta property="og:type" content="website" />

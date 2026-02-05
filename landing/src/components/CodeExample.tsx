@@ -1,4 +1,9 @@
-import { createSignal, For, Show, onMount } from "solid-js";
+"use client";
+import { createSignal, For, onMount } from "solid-js";
+import Prism from "prismjs";
+import "prismjs/components/prism-typescript";
+import "prismjs/components/prism-bash";
+import "prismjs/themes/prism-tomorrow.css";
 import "./CodeExample.css";
 
 const tabs = [
@@ -43,7 +48,7 @@ parser.close();`,
   {
     id: "cli",
     label: "CLI",
-    lang: "shellscript",
+    lang: "bash",
     code: `# Count rows
 turbocsv count data.csv
 
@@ -61,23 +66,20 @@ turbocsv convert --to json data.csv -o data.json`,
   },
 ];
 
+function highlightCode(code: string, lang: string): string {
+  const grammar = Prism.languages[lang];
+  if (!grammar) return code;
+  return Prism.highlight(code, grammar, lang);
+}
+
 export default function CodeExample() {
   const [activeTab, setActiveTab] = createSignal("basic");
   const [highlightedCode, setHighlightedCode] = createSignal<Record<string, string>>({});
 
-  onMount(async () => {
-    const { createHighlighter } = await import("shiki");
-    const highlighter = await createHighlighter({
-      themes: ["github-dark"],
-      langs: ["typescript", "shellscript"],
-    });
-
+  onMount(() => {
     const highlighted: Record<string, string> = {};
     for (const tab of tabs) {
-      highlighted[tab.id] = highlighter.codeToHtml(tab.code, {
-        lang: tab.lang,
-        theme: "github-dark",
-      });
+      highlighted[tab.id] = highlightCode(tab.code, tab.lang);
     }
     setHighlightedCode(highlighted);
   });
@@ -108,16 +110,12 @@ export default function CodeExample() {
                 class="code-block"
                 classList={{ visible: activeTab() === tab.id }}
               >
-                <Show
-                  when={highlightedCode()[tab.id]}
-                  fallback={
-                    <pre>
-                      <code>{tab.code}</code>
-                    </pre>
-                  }
-                >
-                  <div innerHTML={highlightedCode()[tab.id]} />
-                </Show>
+                <pre>
+                  <code
+                    class={`language-${tab.lang}`}
+                    innerHTML={highlightedCode()[tab.id] || tab.code}
+                  />
+                </pre>
               </div>
             )}
           </For>
