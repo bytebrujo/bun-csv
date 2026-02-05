@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds work reliably
+          # Linux
           - os: linux
             arch: x64
             runner: ubuntu-latest
@@ -27,7 +27,23 @@ jobs:
             runner: ubuntu-24.04-arm
             target: aarch64-linux-gnu
             lib: libturbocsv.so
-          # TODO: Add macOS and Windows when platform issues are resolved
+          # macOS
+          - os: macos
+            arch: x64
+            runner: macos-13
+            target: x86_64-macos
+            lib: libturbocsv.dylib
+          - os: macos
+            arch: arm64
+            runner: macos-latest
+            target: aarch64-macos
+            lib: libturbocsv.dylib
+          # Windows
+          - os: windows
+            arch: x64
+            runner: windows-latest
+            target: x86_64-windows-gnu
+            lib: turbocsv.dll
 
     steps:
       - uses: actions/checkout@v4
@@ -84,15 +100,12 @@ jobs:
         run: |
           mkdir -p binaries
 
-          # Extract Linux x64
-          if [ -f artifacts/binary-linux-x64/turbocsv-linux-x64.tar.gz ]; then
-            tar -xzf artifacts/binary-linux-x64/turbocsv-linux-x64.tar.gz -C binaries
-          fi
-
-          # Extract Linux arm64
-          if [ -f artifacts/binary-linux-arm64/turbocsv-linux-arm64.tar.gz ]; then
-            tar -xzf artifacts/binary-linux-arm64/turbocsv-linux-arm64.tar.gz -C binaries
-          fi
+          # Extract all platform tarballs
+          for platform in linux-x64 linux-arm64 macos-x64 macos-arm64 windows-x64; do
+            if [ -f "artifacts/binary-${platform}/turbocsv-${platform}.tar.gz" ]; then
+              tar -xzf "artifacts/binary-${platform}/turbocsv-${platform}.tar.gz" -C binaries
+            fi
+          done
 
           ls -la binaries/
 
