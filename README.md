@@ -331,9 +331,11 @@ bun run benchmark
 turbocsv/
 ├── src/
 │   ├── zig/           # Zig SIMD parser
-│   │   ├── csv_parser.zig
-│   │   ├── simd.zig
-│   │   └── exports.zig
+│   │   ├── parser.zig     # Main CSV parser
+│   │   ├── simd.zig       # SIMD vectorized scanning
+│   │   ├── mmap.zig       # Cross-platform memory mapping
+│   │   ├── iconv.zig      # Character encoding support
+│   │   └── dataframe.zig  # DataFrame operations
 │   ├── ts/            # TypeScript bindings
 │   │   ├── parser.ts
 │   │   ├── dataframe.ts
@@ -347,6 +349,17 @@ turbocsv/
 ├── wasm/              # WASM output
 └── binaries/          # Native binaries (downloaded)
 ```
+
+### Cross-Platform Memory Mapping
+
+The parser uses memory-mapped files for efficient large file handling. Platform-specific implementations are abstracted in `src/zig/mmap.zig`:
+
+| Platform | Implementation |
+|----------|----------------|
+| Linux/macOS | `std.posix.mmap` / `munmap` |
+| Windows | `CreateFileMappingW` / `MapViewOfFile` via kernel32 externs |
+
+This allows zero-copy file access across all supported platforms while maintaining a unified API.
 
 ## License
 

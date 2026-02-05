@@ -1,6 +1,23 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+//! Cross-Platform Memory Mapping
+//!
+//! Provides a unified API for memory-mapped file access across platforms:
+//! - POSIX (Linux, macOS): Uses `mmap`/`munmap` via `std.posix`
+//! - Windows: Uses `CreateFileMappingW`/`MapViewOfFile` via kernel32
+//!
+//! Usage:
+//! ```zig
+//! const file = try std.fs.cwd().openFile("data.csv", .{});
+//! const stat = try file.stat();
+//! const mapped = try MappedFile.init(file, stat.size);
+//! defer mapped.deinit();
+//!
+//! // Access file contents via mapped.data slice
+//! const first_byte = mapped.data[0];
+//! ```
+
 // Windows API declarations (not in Zig stdlib)
 const win32 = if (builtin.os.tag == .windows) struct {
     const HANDLE = std.os.windows.HANDLE;
