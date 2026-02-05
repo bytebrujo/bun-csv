@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Show, onMount } from "solid-js";
+import { createSignal, For, Show, onMount } from "solid-js";
 import "./CodeExample.css";
 
 const tabs = [
@@ -65,6 +65,10 @@ export default function CodeExample() {
   const [activeTab, setActiveTab] = createSignal("basic");
   const [highlightedCode, setHighlightedCode] = createSignal<Record<string, string>>({});
 
+  const handleTabClick = (tabId: string) => {
+    setActiveTab(tabId);
+  };
+
   onMount(async () => {
     const { createHighlighter } = await import("shiki");
     const highlighter = await createHighlighter({
@@ -91,8 +95,9 @@ export default function CodeExample() {
           <For each={tabs}>
             {(tab) => (
               <button
+                type="button"
                 class={`tab ${activeTab() === tab.id ? "active" : ""}`}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={[handleTabClick, tab.id]}
               >
                 {tab.label}
               </button>
