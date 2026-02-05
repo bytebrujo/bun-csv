@@ -27,16 +27,16 @@ jobs:
             runner: ubuntu-24.04-arm
             target: aarch64-linux-gnu
             lib: libturbocsv.so
-          # macOS
+          # macOS - build natively (no target flag) to use system iconv
           - os: macos
             arch: x64
             runner: macos-13
-            target: x86_64-macos
+            target: ""
             lib: libturbocsv.dylib
           - os: macos
             arch: arm64
             runner: macos-latest
-            target: aarch64-macos
+            target: ""
             lib: libturbocsv.dylib
           # TODO: Windows needs mmap abstraction (std.posix.mmap not available)
           # - os: windows
@@ -54,7 +54,13 @@ jobs:
           version: 0.14.0
 
       - name: Build native library
-        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+          else
+            zig build -Doptimize=ReleaseFast
+          fi
+        shell: bash
 
       - name: Create tarball
         run: |
