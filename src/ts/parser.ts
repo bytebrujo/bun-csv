@@ -4,6 +4,7 @@
 
 import { loadNativeLibrary, toCString, isNativeAvailable, CacheLimitStatus, Encoding } from "./ffi";
 import { toArrayBuffer, type Pointer } from "bun:ffi";
+import { readFileSync } from "fs";
 import { CSVRow } from "./row";
 import { DataFrame } from "./dataframe";
 import { CSVWriter, ModificationLog } from "./writer";
@@ -13,8 +14,10 @@ export { CacheLimitStatus, Encoding };
 
 /** Parser options */
 export interface CSVParserOptions<T = Record<string, string>> {
-  /** Field delimiter (default: ",") */
+  /** Field delimiter. Set to "auto" for auto-detection (default: ",") */
   delimiter?: string;
+  /** Candidate delimiters for auto-detection (default: [",", "\t", "|", ";"]) */
+  delimitersToGuess?: string[];
   /** Quote character (default: ") */
   quoteChar?: string;
   /** Escape character for quotes (default: same as quoteChar) */
@@ -90,6 +93,11 @@ export class CSVParser<T = Record<string, string>>
     if (options.writable) {
       this.modifications = new ModificationLog();
       this.cachedRows = new Map();
+    }
+
+    // Auto-detect delimiter if requested
+    if (this.options.delimiter === "auto") {
+      this.options.delimiter = this.autoDetectDelimiter(source);
     }
 
     // Initialize immediately for file paths
@@ -536,6 +544,52 @@ export class CSVParser<T = Record<string, string>>
       preview: this.options.preview ?? 0,
       skipFirstNLines: this.options.skipFirstNLines ?? 0,
     };
+  }
+
+  /**
+   * Auto-detect delimiter by sampling data and testing candidates.
+   * Returns the detected single-character delimiter string.
+   */
+  private autoDetectDelimiter(source: InputSource): string {
+    const lib = loadNativeLibrary();
+
+    // Get sample data
+    let sample: Uint8Array;
+    if (typeof source === "string" && !source.startsWith("http")) {
+      // Read first 8KB of file for detection
+      const fullBuf = readFileSync(source);
+      sample = fullBuf.length > 8192 ? fullBuf.subarray(0, 8192) : fullBuf;
+    } else if (source instanceof Uint8Array) {
+      sample = source.length > 8192 ? source.subarray(0, 8192) : source;
+    } else if (source instanceof ArrayBuffer) {
+      const view = new Uint8Array(source);
+      sample = view.length > 8192 ? view.subarray(0, 8192) : view;
+    } else {
+      return ","; // Fallback for streams
+    }
+
+    // Build candidates array
+    const guesses = this.options.delimitersToGuess;
+    let candidatesArray = new Uint8Array(1); // dummy, ignored when numCandidates=0
+    let numCandidates = 0;
+    if (guesses && guesses.length > 0) {
+      candidatesArray = new Uint8Array(guesses.length);
+      for (let i = 0; i < guesses.length; i++) {
+        candidatesArray[i] = guesses[i]!.charCodeAt(0);
+      }
+      numCandidates = guesses.length;
+    }
+
+    const quoteChar = (this.options.quoteChar ?? '"').charCodeAt(0);
+    const detected = lib.csv_detect_delimiter(
+      sample,
+      sample.length,
+      candidatesArray,
+      numCandidates,
+      quoteChar,
+    ) as number;
+
+    return String.fromCharCode(detected);
   }
 
   /**
