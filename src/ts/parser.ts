@@ -9,6 +9,7 @@ import { CSVRow } from "./row";
 import { DataFrame } from "./dataframe";
 import { CSVWriter, ModificationLog } from "./writer";
 import type { Schema, CSVStats, CacheOptions } from "./types";
+import type { CSVError, CSVErrorCallback } from "./errors";
 
 export { CacheLimitStatus, Encoding };
 
@@ -40,6 +41,8 @@ export interface CSVParserOptions<T = Record<string, string>> {
   writable?: boolean;
   /** Cache options */
   cache?: CacheOptions;
+  /** Error callback invoked for each parsing error */
+  onError?: CSVErrorCallback;
 }
 
 /** Input source types */
@@ -72,6 +75,10 @@ export class CSVParser<T = Record<string, string>>
   private startTime: number = 0;
   private closed: boolean = false;
   private sourcePath: string | null = null;
+
+  // Error tracking
+  private _errors: CSVError[] = [];
+  private dataRowIndex: number = 0;
 
   // Copy-on-write modification tracking
   private modifications: ModificationLog | null = null;
@@ -204,6 +211,21 @@ export class CSVParser<T = Record<string, string>>
       this.headers.set(value, i);
       this.headerRow.push(value);
     }
+  }
+
+  /**
+   * Get all parsing errors collected during iteration.
+   */
+  get errors(): ReadonlyArray<CSVError> {
+    return this._errors;
+  }
+
+  /**
+   * Record a parsing error and invoke the onError callback if set.
+   */
+  private recordError(error: CSVError): void {
+    this._errors.push(error);
+    this.options.onError?.(error);
   }
 
   /**
@@ -748,9 +770,32 @@ export class CSVParser<T = Record<string, string>>
     }
 
     const lib = loadNativeLibrary();
+    const expectedFields = this.headerRow ? this.headerRow.length : 0;
 
     while (lib.csv_next_row(this.handle)) {
       const fieldCount = lib.csv_get_field_count(this.handle);
+      const fieldCountNum = Number(fieldCount);
+
+      // Detect field count mismatches when headers are present
+      if (expectedFields > 0 && fieldCountNum !== expectedFields) {
+        if (fieldCountNum > expectedFields) {
+          this.recordError({
+            type: "FieldMismatch",
+            code: "TooManyFields",
+            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
+            row: this.dataRowIndex,
+          });
+        } else {
+          this.recordError({
+            type: "FieldMismatch",
+            code: "TooFewFields",
+            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
+            row: this.dataRowIndex,
+          });
+        }
+      }
+
+      this.dataRowIndex++;
 
       yield new CSVRow<T>(
         this.handle,
@@ -770,10 +815,33 @@ export class CSVParser<T = Record<string, string>>
     }
 
     const lib = loadNativeLibrary();
+    const expectedFields = this.headerRow ? this.headerRow.length : 0;
     let rowCount = 0;
 
     while (lib.csv_next_row(this.handle)) {
       const fieldCount = lib.csv_get_field_count(this.handle);
+      const fieldCountNum = Number(fieldCount);
+
+      // Detect field count mismatches when headers are present
+      if (expectedFields > 0 && fieldCountNum !== expectedFields) {
+        if (fieldCountNum > expectedFields) {
+          this.recordError({
+            type: "FieldMismatch",
+            code: "TooManyFields",
+            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
+            row: this.dataRowIndex,
+          });
+        } else {
+          this.recordError({
+            type: "FieldMismatch",
+            code: "TooFewFields",
+            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
+            row: this.dataRowIndex,
+          });
+        }
+      }
+
+      this.dataRowIndex++;
 
       yield new CSVRow<T>(
         this.handle,

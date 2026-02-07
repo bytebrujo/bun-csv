@@ -9,6 +9,7 @@ export { CSVRow } from "./row";
 export { DataFrame, type DataFrameOptions } from "./dataframe";
 export { CSVWriter, ModificationLog, type CSVWriterOptions } from "./writer";
 export { unparse, type UnparseConfig } from "./unparse";
+export type { CSVError, CSVErrorType, CSVErrorCode, CSVErrorCallback } from "./errors";
 export { loadNativeLibrary, isNativeAvailable } from "./ffi";
 export type {
   Schema,
