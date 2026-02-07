@@ -1,0 +1,73 @@
+.whats-new {
+  background: var(--bg-primary);
+}
+
+.whats-new h2 {
+  margin-bottom: 0.5rem;
+}
+
+.whats-new-subtitle {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin-bottom: 2rem;
+}
+
+.whats-new-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .whats-new-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.whats-new-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.25rem;
+  transition: border-color 0.2s ease;
+}
+
+.whats-new-card:hover {
+  border-color: var(--ds-gray-500);
+}
+
+.whats-new-card h3 {
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-primary);
+}
+
+.whats-new-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.whats-new-list li {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  line-height: 1.5;
+}
+
+.whats-new-list li::before {
+  content: ">";
+  color: var(--ds-gray-500);
+  flex-shrink: 0;
+  font-size: 0.8rem;
+}
+
+.whats-new-list code {
+  font-size: 0.8rem;
+  padding: 0.1em 0.35em;
+}
