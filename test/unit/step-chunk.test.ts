@@ -156,10 +156,10 @@ describe("chunk callback", () => {
 
     // 10 rows with chunkSize=3 → 4 chunks (3+3+3+1)
     expect(chunks.length).toBe(4);
-    expect(chunks[0].length).toBe(3);
-    expect(chunks[1].length).toBe(3);
-    expect(chunks[2].length).toBe(3);
-    expect(chunks[3].length).toBe(1);
+    expect(chunks[0]!.length).toBe(3);
+    expect(chunks[1]!.length).toBe(3);
+    expect(chunks[2]!.length).toBe(3);
+    expect(chunks[3]!.length).toBe(1);
   });
 
   test("default chunk size collects all rows in one chunk", () => {
@@ -178,7 +178,7 @@ describe("chunk callback", () => {
 
     // 5 rows < 1000 default → 1 chunk
     expect(chunks.length).toBe(1);
-    expect(chunks[0].length).toBe(5);
+    expect(chunks[0]!.length).toBe(5);
   });
 
   test("abort stops chunk processing", () => {
@@ -242,7 +242,7 @@ describe("chunk callback", () => {
 
     // After pause, only 1 chunk (3 rows) processed
     expect(chunks.length).toBe(1);
-    expect(chunks[0].length).toBe(3);
+    expect(chunks[0]!.length).toBe(3);
 
     // Resume parsing
     savedHandle!.resume();
