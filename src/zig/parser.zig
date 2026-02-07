@@ -32,6 +32,7 @@ pub const ParserConfig = struct {
     has_header: bool = true,
     skip_empty_rows: bool = true,
     comment_char: u8 = 0, // 0 = disabled, otherwise skip lines starting with this char
+    preview: usize = 0, // 0 = unlimited, otherwise limit to N data rows
     max_field_size: usize = 0, // 0 = unlimited
     soft_cache_limit: usize = 256 * 1024 * 1024, // 256MB
     hard_cache_limit: usize = 1024 * 1024 * 1024, // 1GB
@@ -310,6 +311,20 @@ pub const Parser = struct {
             }
 
             self.stats.rows_emitted += 1;
+
+            // Enforce preview (row limit) if configured
+            // preview counts data rows only; when has_header is true, the first
+            // emitted row is the header and should not count toward the limit.
+            if (self.config.preview != 0) {
+                const data_rows = if (self.config.has_header)
+                    self.stats.rows_emitted - 1
+                else
+                    self.stats.rows_emitted;
+                if (data_rows >= self.config.preview) {
+                    self.is_closed = true;
+                }
+            }
+
             return true;
         }
     }
@@ -482,6 +497,7 @@ export fn csv_init_with_config(
     has_header: bool,
     skip_empty_rows: bool,
     comment_char: u8,
+    preview: usize,
 ) ?ParserHandle {
     const path = std.mem.span(file_path_ptr);
     const config = ParserConfig{
@@ -491,6 +507,7 @@ export fn csv_init_with_config(
         .has_header = has_header,
         .skip_empty_rows = skip_empty_rows,
         .comment_char = comment_char,
+        .preview = preview,
     };
     const parser = Parser.initFromFile(global_allocator, path, config) catch return null;
     return @ptrCast(parser);
@@ -513,6 +530,7 @@ export fn csv_init_buffer_with_config(
     has_header: bool,
     skip_empty_rows: bool,
     comment_char: u8,
+    preview: usize,
 ) ?ParserHandle {
     const data = data_ptr[0..data_len];
     const config = ParserConfig{
@@ -522,6 +540,7 @@ export fn csv_init_buffer_with_config(
         .has_header = has_header,
         .skip_empty_rows = skip_empty_rows,
         .comment_char = comment_char,
+        .preview = preview,
     };
     const parser = Parser.initFromBuffer(global_allocator, data, config) catch return null;
     return @ptrCast(parser);
