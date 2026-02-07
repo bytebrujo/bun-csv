@@ -31,6 +31,7 @@ pub const ParserConfig = struct {
     escape_char: u8 = '"',
     has_header: bool = true,
     skip_empty_rows: bool = true,
+    comment_char: u8 = 0, // 0 = disabled, otherwise skip lines starting with this char
     max_field_size: usize = 0, // 0 = unlimited
     soft_cache_limit: usize = 256 * 1024 * 1024, // 256MB
     hard_cache_limit: usize = 1024 * 1024 * 1024, // 1GB
@@ -300,6 +301,14 @@ pub const Parser = struct {
                 }
             }
 
+            // Skip comment lines if configured
+            if (self.config.comment_char != 0 and self.field_offsets.items.len > 0) {
+                const first_field = self.field_offsets.items[0];
+                if (first_field.len > 0 and self.data[first_field.start] == self.config.comment_char) {
+                    continue; // Skip comment row
+                }
+            }
+
             self.stats.rows_emitted += 1;
             return true;
         }
@@ -472,6 +481,7 @@ export fn csv_init_with_config(
     escape_char: u8,
     has_header: bool,
     skip_empty_rows: bool,
+    comment_char: u8,
 ) ?ParserHandle {
     const path = std.mem.span(file_path_ptr);
     const config = ParserConfig{
@@ -480,6 +490,7 @@ export fn csv_init_with_config(
         .escape_char = escape_char,
         .has_header = has_header,
         .skip_empty_rows = skip_empty_rows,
+        .comment_char = comment_char,
     };
     const parser = Parser.initFromFile(global_allocator, path, config) catch return null;
     return @ptrCast(parser);
@@ -501,6 +512,7 @@ export fn csv_init_buffer_with_config(
     escape_char: u8,
     has_header: bool,
     skip_empty_rows: bool,
+    comment_char: u8,
 ) ?ParserHandle {
     const data = data_ptr[0..data_len];
     const config = ParserConfig{
@@ -509,6 +521,7 @@ export fn csv_init_buffer_with_config(
         .escape_char = escape_char,
         .has_header = has_header,
         .skip_empty_rows = skip_empty_rows,
+        .comment_char = comment_char,
     };
     const parser = Parser.initFromBuffer(global_allocator, data, config) catch return null;
     return @ptrCast(parser);

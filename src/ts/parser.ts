@@ -23,6 +23,8 @@ export interface CSVParserOptions<T = Record<string, string>> {
   hasHeader?: boolean;
   /** Skip empty rows (default: true) */
   skipEmptyRows?: boolean;
+  /** Skip lines starting with this character (default: false/disabled). Set to true for '#', or a string for custom. */
+  comments?: boolean | string;
   /** File encoding (default: auto-detect) */
   encoding?: string;
   /** Schema for typed access */
@@ -108,19 +110,16 @@ export class CSVParser<T = Record<string, string>>
     const lib = loadNativeLibrary();
     const pathBytes = toCString(path);
 
-    const delimiter = (this.options.delimiter ?? ",").charCodeAt(0);
-    const quoteChar = (this.options.quoteChar ?? '"').charCodeAt(0);
-    const escapeChar = (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0);
-    const hasHeader = this.options.hasHeader ?? true;
-    const skipEmptyRows = this.options.skipEmptyRows ?? true;
+    const config = this.resolveNativeConfig();
 
     this.handle = lib.csv_init_with_config(
       pathBytes,
-      delimiter,
-      quoteChar,
-      escapeChar,
-      hasHeader,
-      skipEmptyRows,
+      config.delimiter,
+      config.quoteChar,
+      config.escapeChar,
+      config.hasHeader,
+      config.skipEmptyRows,
+      config.commentChar,
     ) as number;
 
     if (!this.handle) {
@@ -144,21 +143,17 @@ export class CSVParser<T = Record<string, string>>
     }
 
     const lib = loadNativeLibrary();
-
-    const delimiter = (this.options.delimiter ?? ",").charCodeAt(0);
-    const quoteChar = (this.options.quoteChar ?? '"').charCodeAt(0);
-    const escapeChar = (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0);
-    const hasHeader = this.options.hasHeader ?? true;
-    const skipEmptyRows = this.options.skipEmptyRows ?? true;
+    const config = this.resolveNativeConfig();
 
     this.handle = lib.csv_init_buffer_with_config(
       data,
       data.length,
-      delimiter,
-      quoteChar,
-      escapeChar,
-      hasHeader,
-      skipEmptyRows,
+      config.delimiter,
+      config.quoteChar,
+      config.escapeChar,
+      config.hasHeader,
+      config.skipEmptyRows,
+      config.commentChar,
     ) as number;
 
     if (!this.handle) {
@@ -512,6 +507,28 @@ export class CSVParser<T = Record<string, string>>
   }
 
   /**
+   * Resolve parser options to native config values (char codes + booleans).
+   */
+  private resolveNativeConfig() {
+    const comments = this.options.comments;
+    let commentChar = 0; // 0 = disabled
+    if (comments === true) {
+      commentChar = "#".charCodeAt(0);
+    } else if (typeof comments === "string" && comments.length > 0) {
+      commentChar = comments.charCodeAt(0);
+    }
+
+    return {
+      delimiter: (this.options.delimiter ?? ",").charCodeAt(0),
+      quoteChar: (this.options.quoteChar ?? '"').charCodeAt(0),
+      escapeChar: (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0),
+      hasHeader: this.options.hasHeader ?? true,
+      skipEmptyRows: this.options.skipEmptyRows ?? true,
+      commentChar,
+    };
+  }
+
+  /**
    * Resolve column name to index.
    */
   private resolveColumnIndex(name: string): number {
@@ -558,19 +575,16 @@ export class CSVParser<T = Record<string, string>>
 
       // Re-open with same config
       const pathBytes = toCString(this.sourcePath);
-      const delimiter = (this.options.delimiter ?? ",").charCodeAt(0);
-      const quoteChar = (this.options.quoteChar ?? '"').charCodeAt(0);
-      const escapeChar = (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0);
-      const hasHeader = this.options.hasHeader ?? true;
-      const skipEmptyRows = this.options.skipEmptyRows ?? true;
+      const config = this.resolveNativeConfig();
 
       this.handle = lib.csv_init_with_config(
         pathBytes,
-        delimiter,
-        quoteChar,
-        escapeChar,
-        hasHeader,
-        skipEmptyRows,
+        config.delimiter,
+        config.quoteChar,
+        config.escapeChar,
+        config.hasHeader,
+        config.skipEmptyRows,
+        config.commentChar,
       ) as number;
 
       if (!this.handle) {
