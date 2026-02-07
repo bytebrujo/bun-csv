@@ -104,6 +104,22 @@ export interface CSVParserOptions<T = Record<string, string>> {
   chunkSize?: number;
 }
 
+/** Parse metadata (PapaParse-compatible) */
+export interface CSVMeta {
+  /** Delimiter used for parsing */
+  delimiter: string;
+  /** Line ending used in the data */
+  linebreak: string;
+  /** Whether parsing was aborted */
+  aborted: boolean;
+  /** Whether output was truncated (e.g. by preview limit) */
+  truncated: boolean;
+  /** Header field names (null if no headers) */
+  fields: string[] | null;
+  /** Elapsed parse time in milliseconds */
+  elapsedMs: number;
+}
+
 /** Input source types */
 type InputSource = string | ReadableStream | ArrayBuffer | Uint8Array;
 
@@ -133,6 +149,8 @@ export class CSVParser<T = Record<string, string>>
   private headerRow: string[] | null = null;
   private startTime: number = 0;
   private closed: boolean = false;
+  private aborted: boolean = false;
+  private truncated: boolean = false;
   private sourcePath: string | null = null;
 
   // Error tracking
@@ -333,6 +351,22 @@ export class CSVParser<T = Record<string, string>>
    */
   getHeaders(): string[] | null {
     return this.headerRow;
+  }
+
+  /**
+   * Get parse metadata (PapaParse-compatible).
+   * Returns information about the delimiter, linebreak, fields,
+   * and whether parsing was aborted or truncated.
+   */
+  getMeta(): CSVMeta {
+    return {
+      delimiter: this.options.delimiter ?? ",",
+      linebreak: "\n",
+      aborted: this.aborted,
+      truncated: this.truncated,
+      fields: this.headerRow ? [...this.headerRow] : null,
+      elapsedMs: this.startTime > 0 ? performance.now() - this.startTime : 0,
+    };
   }
 
   /**
