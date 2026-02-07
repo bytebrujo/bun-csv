@@ -22,23 +22,27 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-linux-gnu
             lib: libturbocsv.so
+            lib_dir: lib
           - os: linux
             arch: arm64
             runner: ubuntu-24.04-arm
             target: aarch64-linux-gnu
             lib: libturbocsv.so
+            lib_dir: lib
           # macOS - build natively (no target flag) to use system iconv
           - os: macos
             arch: arm64
             runner: macos-latest
             target: ""
             lib: libturbocsv.dylib
-          # Windows
+            lib_dir: lib
+          # Windows - Zig outputs DLLs to bin/ not lib/
           - os: windows
             arch: x64
             runner: windows-latest
             target: x86_64-windows-gnu
             lib: turbocsv.dll
+            lib_dir: bin
 
     steps:
       - uses: actions/checkout@v4
@@ -58,9 +62,10 @@ jobs:
         shell: bash
 
       - name: Create tarball
+        shell: bash
         run: |
           mkdir -p binaries/${{ matrix.os }}-${{ matrix.arch }}
-          cp zig-out/lib/${{ matrix.lib }} binaries/${{ matrix.os }}-${{ matrix.arch }}/
+          cp zig-out/${{ matrix.lib_dir }}/${{ matrix.lib }} binaries/${{ matrix.os }}-${{ matrix.arch }}/
           tar -czvf turbocsv-${{ matrix.os }}-${{ matrix.arch }}.tar.gz -C binaries .
 
       - name: Upload artifact

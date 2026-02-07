@@ -55,7 +55,7 @@ function getPlatformConfig(): PlatformConfig | null {
         os: "windows",
         arch: "x64",
         libName: "turbocsv.dll",
-        tarName: "turbocsv-windows-x64.zip",
+        tarName: "turbocsv-windows-x64.tar.gz",
       },
     },
   };
