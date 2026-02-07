@@ -45,6 +45,9 @@ interface RowStringData {
 /** Dynamic typing configuration */
 export type DynamicTypingConfig = boolean | Record<string, boolean> | ((field: string | number) => boolean);
 
+/** Transform callback type */
+export type TransformFn = (value: string, field: string | number) => string;
+
 export class CSVRow<T = Record<string, string>> {
   private handle: number;
   private fieldCount: number;
@@ -54,6 +57,7 @@ export class CSVRow<T = Record<string, string>> {
   private batchData: BatchData | null = null;
   private rowStringData: RowStringData | null = null;
   private dynamicTyping: DynamicTypingConfig;
+  private transform: TransformFn | null;
 
   constructor(
     handle: number,
@@ -61,6 +65,7 @@ export class CSVRow<T = Record<string, string>> {
     headers: Map<string, number> | null = null,
     schema: Schema<T> | null = null,
     dynamicTyping: DynamicTypingConfig = false,
+    transform: TransformFn | null = null,
   ) {
     this.handle = handle;
     this.fieldCount = fieldCount;
@@ -68,6 +73,7 @@ export class CSVRow<T = Record<string, string>> {
     this.schema = schema;
     this.cache = new Map();
     this.dynamicTyping = dynamicTyping;
+    this.transform = transform;
   }
 
   /**
@@ -225,6 +231,9 @@ export class CSVRow<T = Record<string, string>> {
         value = TEXT_DECODER.decode(buffer);
       }
 
+      if (this.transform) {
+        value = this.transform(value, this.resolveFieldName(colIndex));
+      }
       this.cache.set(colIndex, value);
       return value;
     }
@@ -267,6 +276,9 @@ export class CSVRow<T = Record<string, string>> {
       value = TEXT_DECODER.decode(buffer);
     }
 
+    if (this.transform) {
+      value = this.transform(value, this.resolveFieldName(colIndex));
+    }
     this.cache.set(colIndex, value);
     return value;
   }
@@ -382,6 +394,18 @@ export class CSVRow<T = Record<string, string>> {
       arr.push(this.dynamicTyping ? this.dynamicCoerce(raw, i) : raw);
     }
     return arr;
+  }
+
+  /**
+   * Resolve column index to header name (or index if no headers).
+   */
+  private resolveFieldName(colIndex: number): string | number {
+    if (this.headers) {
+      for (const [name, idx] of this.headers) {
+        if (idx === colIndex) return name;
+      }
+    }
+    return colIndex;
   }
 
   /**
