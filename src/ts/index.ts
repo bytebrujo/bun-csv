@@ -4,7 +4,7 @@
  * @module turbocsv
  */
 
-export { CSVParser, type CSVParserOptions } from "./parser";
+export { CSVParser, type CSVParserOptions, type StepResult, type ChunkResult, type ParseMeta, type ParserHandle } from "./parser";
 export { CSVRow } from "./row";
 export { DataFrame, type DataFrameOptions } from "./dataframe";
 export { CSVWriter, ModificationLog, type CSVWriterOptions } from "./writer";
