@@ -50,6 +50,10 @@ export interface CSVParserOptions<T = Record<string, string>> {
    * - `(field: string | number) => boolean`: function returning whether to type a field
    */
   dynamicTyping?: boolean | Record<string, boolean> | ((field: string | number) => boolean);
+  /** Transform each field value during parsing. Receives (value, headerNameOrIndex). */
+  transform?: (value: string, field: string | number) => string;
+  /** Transform header names when they are first read. Receives (header, index). */
+  transformHeader?: (header: string, index: number) => string;
 }
 
 /** Input source types */
@@ -214,7 +218,10 @@ export class CSVParser<T = Record<string, string>>
     const row = new CSVRow<Record<string, string>>(this.handle, fieldCount);
 
     for (let i = 0; i < fieldCount; i++) {
-      const value = row.get(i) ?? `col${i}`;
+      let value = row.get(i) ?? `col${i}`;
+      if (this.options.transformHeader) {
+        value = this.options.transformHeader(value, i);
+      }
       this.headers.set(value, i);
       this.headerRow.push(value);
     }
@@ -810,6 +817,7 @@ export class CSVParser<T = Record<string, string>>
         this.headers,
         this.options.schema ?? null,
         this.options.dynamicTyping ?? false,
+        this.options.transform ?? null,
       );
     }
   }
@@ -857,6 +865,7 @@ export class CSVParser<T = Record<string, string>>
         this.headers,
         this.options.schema ?? null,
         this.options.dynamicTyping ?? false,
+        this.options.transform ?? null,
       );
 
       // Yield to event loop periodically
