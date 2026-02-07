@@ -43,6 +43,13 @@ export interface CSVParserOptions<T = Record<string, string>> {
   cache?: CacheOptions;
   /** Error callback invoked for each parsing error */
   onError?: CSVErrorCallback;
+  /**
+   * Auto-convert string values to JavaScript types.
+   * - `true`: enable for all fields
+   * - `Record<string, boolean>`: enable per header name
+   * - `(field: string | number) => boolean`: function returning whether to type a field
+   */
+  dynamicTyping?: boolean | Record<string, boolean> | ((field: string | number) => boolean);
 }
 
 /** Input source types */
@@ -801,7 +808,8 @@ export class CSVParser<T = Record<string, string>>
         this.handle,
         fieldCount,
         this.headers,
-        this.options.schema ?? null
+        this.options.schema ?? null,
+        this.options.dynamicTyping ?? false,
       );
     }
   }
@@ -847,7 +855,8 @@ export class CSVParser<T = Record<string, string>>
         this.handle,
         fieldCount,
         this.headers,
-        this.options.schema ?? null
+        this.options.schema ?? null,
+        this.options.dynamicTyping ?? false,
       );
 
       // Yield to event loop periodically

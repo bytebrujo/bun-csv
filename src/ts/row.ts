@@ -42,6 +42,9 @@ interface RowStringData {
  * Fields are lazily decoded from the native parser only when accessed.
  * Uses batch FFI to load all field pointers in one call for efficiency.
  */
+/** Dynamic typing configuration */
+export type DynamicTypingConfig = boolean | Record<string, boolean> | ((field: string | number) => boolean);
+
 export class CSVRow<T = Record<string, string>> {
   private handle: number;
   private fieldCount: number;
@@ -50,18 +53,21 @@ export class CSVRow<T = Record<string, string>> {
   private cache: Map<number, string>;
   private batchData: BatchData | null = null;
   private rowStringData: RowStringData | null = null;
+  private dynamicTyping: DynamicTypingConfig;
 
   constructor(
     handle: number,
     fieldCount: number,
     headers: Map<string, number> | null = null,
-    schema: Schema<T> | null = null
+    schema: Schema<T> | null = null,
+    dynamicTyping: DynamicTypingConfig = false,
   ) {
     this.handle = handle;
     this.fieldCount = fieldCount;
     this.headers = headers;
     this.schema = schema;
     this.cache = new Map();
+    this.dynamicTyping = dynamicTyping;
   }
 
   /**
@@ -304,18 +310,61 @@ export class CSVRow<T = Record<string, string>> {
   }
 
   /**
-   * Convert row to plain object using headers.
+   * Check whether dynamic typing is enabled for a given field.
    */
-  toObject(): Record<string, string | null> {
-    const obj: Record<string, string | null> = {};
+  private shouldDynamicType(field: string | number): boolean {
+    if (this.dynamicTyping === true) return true;
+    if (this.dynamicTyping === false || !this.dynamicTyping) return false;
+    if (typeof this.dynamicTyping === "function") return this.dynamicTyping(field);
+    // Record<string, boolean> — look up by header name
+    if (typeof field === "string") return this.dynamicTyping[field] ?? false;
+    // Numeric index — resolve to header name if possible
+    if (this.headers) {
+      for (const [name, idx] of this.headers) {
+        if (idx === field) return this.dynamicTyping[name] ?? false;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Auto-coerce a string value to a JavaScript type.
+   * Rules: "true"/"false" → boolean, numeric → number, "" → null.
+   */
+  private dynamicCoerce(value: string | null, field: string | number): unknown {
+    if (value === null || value === "") return null;
+    if (!this.shouldDynamicType(field)) return value;
+
+    // Boolean
+    const lower = value.toLowerCase();
+    if (lower === "true") return true;
+    if (lower === "false") return false;
+
+    // Number (int, float, scientific notation)
+    if (/^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(value)) {
+      const num = Number(value);
+      if (!isNaN(num)) return num;
+    }
+
+    return value;
+  }
+
+  /**
+   * Convert row to plain object using headers.
+   * When dynamicTyping is enabled, values are auto-coerced.
+   */
+  toObject(): Record<string, any> {
+    const obj: Record<string, any> = {};
 
     if (this.headers) {
       for (const [name, index] of this.headers) {
-        obj[name] = this.get(index as keyof T | number);
+        const raw = this.get(index as keyof T | number);
+        obj[name] = this.dynamicTyping ? this.dynamicCoerce(raw, name) : raw;
       }
     } else {
       for (let i = 0; i < this.fieldCount; i++) {
-        obj[`col${i}`] = this.get(i);
+        const raw = this.get(i);
+        obj[`col${i}`] = this.dynamicTyping ? this.dynamicCoerce(raw, i) : raw;
       }
     }
 
@@ -324,11 +373,13 @@ export class CSVRow<T = Record<string, string>> {
 
   /**
    * Convert row to array of values.
+   * When dynamicTyping is enabled, values are auto-coerced.
    */
-  toArray(): (string | null)[] {
-    const arr: (string | null)[] = [];
+  toArray(): any[] {
+    const arr: any[] = [];
     for (let i = 0; i < this.fieldCount; i++) {
-      arr.push(this.get(i));
+      const raw = this.get(i);
+      arr.push(this.dynamicTyping ? this.dynamicCoerce(raw, i) : raw);
     }
     return arr;
   }
