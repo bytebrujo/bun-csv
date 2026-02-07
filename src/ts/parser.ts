@@ -13,6 +13,48 @@ import type { CSVError, CSVErrorCallback } from "./errors";
 
 export { CacheLimitStatus, Encoding };
 
+/** Result passed to step callback (per-row) */
+export interface StepResult {
+  /** Row data as object (with headers) or array (without) */
+  data: Record<string, string | null> | (string | null)[];
+  /** Errors for this row */
+  errors: any[];
+  /** Parse metadata */
+  meta: ParseMeta;
+}
+
+/** Result passed to chunk callback (per-batch) */
+export interface ChunkResult {
+  /** Array of row data */
+  data: (Record<string, string | null> | (string | null)[])[];
+  /** Errors for this chunk */
+  errors: any[];
+  /** Parse metadata */
+  meta: ParseMeta;
+}
+
+/** Parse metadata */
+export interface ParseMeta {
+  /** Delimiter used */
+  delimiter: string;
+  /** Line ending detected */
+  linebreak: string;
+  /** Whether parsing was aborted */
+  aborted: boolean;
+  /** Whether more data is available (truncated) */
+  truncated: boolean;
+}
+
+/** Handle for controlling the parser from callbacks */
+export interface ParserHandle {
+  /** Stop parsing immediately */
+  abort: () => void;
+  /** Pause parsing (call resume() to continue) */
+  pause: () => void;
+  /** Resume parsing after pause */
+  resume: () => void;
+}
+
 /** Parser options */
 export interface CSVParserOptions<T = Record<string, string>> {
   /** Field delimiter. Set to "auto" for auto-detection (default: ",") */
@@ -54,6 +96,12 @@ export interface CSVParserOptions<T = Record<string, string>> {
   transform?: (value: string, field: string | number) => string;
   /** Transform header names when they are first read. Receives (header, index). */
   transformHeader?: (header: string, index: number) => string;
+  /** Step callback - called for each row during parse() */
+  step?: (results: StepResult, parser: ParserHandle) => void;
+  /** Chunk callback - called for each batch during parse() */
+  chunk?: (results: ChunkResult, parser: ParserHandle) => void;
+  /** Rows per chunk when using chunk callback (default: 1000) */
+  chunkSize?: number;
 }
 
 /** Input source types */
@@ -90,6 +138,11 @@ export class CSVParser<T = Record<string, string>>
   // Error tracking
   private _errors: CSVError[] = [];
   private dataRowIndex: number = 0;
+
+  // Step/chunk callback state
+  private aborted: boolean = false;
+  private paused: boolean = false;
+  private parserHandle: ParserHandle | null = null;
 
   // Copy-on-write modification tracking
   private modifications: ModificationLog | null = null;
@@ -758,6 +811,131 @@ export class CSVParser<T = Record<string, string>>
     if (!isNativeAvailable()) return 0;
     const lib = loadNativeLibrary();
     return lib.csv_get_simd_width();
+  }
+
+  // ==========================================================================
+  // Step / Chunk Callback API
+  // ==========================================================================
+
+  /**
+   * Run the parser with step/chunk callbacks.
+   * Alternative to iteration — provides callback-style streaming API.
+   * When step is set, the callback fires once per row.
+   * When chunk is set, the callback fires once per batch (chunkSize rows).
+   */
+  parse(): void {
+    if (!this.handle) {
+      throw new Error("Parser not initialized");
+    }
+    if (!this.options.step && !this.options.chunk) {
+      throw new Error("parse() requires a step or chunk callback in options");
+    }
+
+    this.aborted = false;
+    this.paused = false;
+    this.runCallbacks();
+  }
+
+  private getOrCreateHandle(): ParserHandle {
+    if (!this.parserHandle) {
+      this.parserHandle = {
+        abort: () => {
+          this.aborted = true;
+        },
+        pause: () => {
+          this.paused = true;
+        },
+        resume: () => {
+          this.paused = false;
+          this.runCallbacks();
+        },
+      };
+    }
+    return this.parserHandle;
+  }
+
+  private createMeta(): ParseMeta {
+    return {
+      delimiter: this.options.delimiter ?? ",",
+      linebreak: "\n",
+      aborted: this.aborted,
+      truncated: false,
+    };
+  }
+
+  private runCallbacks(): void {
+    if (this.options.step) {
+      this.runStep();
+    } else if (this.options.chunk) {
+      this.runChunk();
+    }
+  }
+
+  private runStep(): void {
+    if (!this.handle) return;
+
+    const lib = loadNativeLibrary();
+    const handle = this.getOrCreateHandle();
+
+    while (!this.aborted && !this.paused && lib.csv_next_row(this.handle)) {
+      const fieldCount = lib.csv_get_field_count(this.handle);
+      const row = new CSVRow<T>(
+        this.handle,
+        fieldCount,
+        this.headers,
+        this.options.schema ?? null
+      );
+
+      const data = this.headers ? row.toObject() : row.toArray();
+
+      this.options.step!({
+        data,
+        errors: [],
+        meta: this.createMeta(),
+      }, handle);
+    }
+  }
+
+  private runChunk(): void {
+    if (!this.handle) return;
+
+    const lib = loadNativeLibrary();
+    const handle = this.getOrCreateHandle();
+    const chunkSize = this.options.chunkSize ?? 1000;
+
+    let chunk: (Record<string, string | null> | (string | null)[])[] = [];
+
+    while (!this.aborted && !this.paused && lib.csv_next_row(this.handle)) {
+      const fieldCount = lib.csv_get_field_count(this.handle);
+      const row = new CSVRow<T>(
+        this.handle,
+        fieldCount,
+        this.headers,
+        this.options.schema ?? null
+      );
+
+      chunk.push(this.headers ? row.toObject() : row.toArray());
+
+      if (chunk.length >= chunkSize) {
+        this.options.chunk!({
+          data: chunk,
+          errors: [],
+          meta: this.createMeta(),
+        }, handle);
+        chunk = [];
+
+        if (this.aborted || this.paused) break;
+      }
+    }
+
+    // Flush remaining rows
+    if (chunk.length > 0 && !this.aborted && !this.paused) {
+      this.options.chunk!({
+        data: chunk,
+        errors: [],
+        meta: this.createMeta(),
+      }, handle);
+    }
   }
 
   /**
