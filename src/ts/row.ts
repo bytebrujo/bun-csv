@@ -370,8 +370,21 @@ export class CSVRow<T = Record<string, string>> {
 
     if (this.headers) {
       for (const [name, index] of this.headers) {
-        const raw = this.get(index as keyof T | number);
-        obj[name] = this.dynamicTyping ? this.dynamicCoerce(raw, name) : raw;
+        if (index < this.fieldCount) {
+          const raw = this.get(index as keyof T | number);
+          obj[name] = this.dynamicTyping ? this.dynamicCoerce(raw, name) : raw;
+        } else {
+          obj[name] = null;
+        }
+      }
+
+      // Collect excess fields into __parsed_extra
+      if (this.fieldCount > this.headers.size) {
+        const extra: string[] = [];
+        for (let i = this.headers.size; i < this.fieldCount; i++) {
+          extra.push(this.get(i) ?? "");
+        }
+        (obj as any).__parsed_extra = extra;
       }
     } else {
       for (let i = 0; i < this.fieldCount; i++) {
