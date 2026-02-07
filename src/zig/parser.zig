@@ -33,6 +33,7 @@ pub const ParserConfig = struct {
     skip_empty_rows: bool = true,
     comment_char: u8 = 0, // 0 = disabled, otherwise skip lines starting with this char
     preview: usize = 0, // 0 = unlimited, otherwise limit to N data rows
+    skip_first_n_lines: usize = 0, // 0 = disabled, skip N raw lines before parsing begins
     max_field_size: usize = 0, // 0 = unlimited
     soft_cache_limit: usize = 256 * 1024 * 1024, // 256MB
     hard_cache_limit: usize = 1024 * 1024 * 1024, // 1GB
@@ -185,6 +186,10 @@ pub const Parser = struct {
             .file_size = file_size,
         };
 
+        if (config.skip_first_n_lines > 0) {
+            parser.skipLines(config.skip_first_n_lines);
+        }
+
         return parser;
     }
 
@@ -254,7 +259,23 @@ pub const Parser = struct {
             .file_size = data.len,
         };
 
+        if (config.skip_first_n_lines > 0) {
+            parser.skipLines(config.skip_first_n_lines);
+        }
+
         return parser;
+    }
+
+    /// Skip N raw lines by advancing the cursor past N newline characters.
+    /// Called during init when skip_first_n_lines is configured.
+    fn skipLines(self: *Self, n: usize) void {
+        var skipped: usize = 0;
+        while (skipped < n and self.cursor < self.data_len) {
+            if (self.data[self.cursor] == '\n') {
+                skipped += 1;
+            }
+            self.cursor += 1;
+        }
     }
 
     /// Advance to next row, parsing field boundaries
@@ -498,6 +519,7 @@ export fn csv_init_with_config(
     skip_empty_rows: bool,
     comment_char: u8,
     preview: usize,
+    skip_first_n_lines: usize,
 ) ?ParserHandle {
     const path = std.mem.span(file_path_ptr);
     const config = ParserConfig{
@@ -508,6 +530,7 @@ export fn csv_init_with_config(
         .skip_empty_rows = skip_empty_rows,
         .comment_char = comment_char,
         .preview = preview,
+        .skip_first_n_lines = skip_first_n_lines,
     };
     const parser = Parser.initFromFile(global_allocator, path, config) catch return null;
     return @ptrCast(parser);
@@ -531,6 +554,7 @@ export fn csv_init_buffer_with_config(
     skip_empty_rows: bool,
     comment_char: u8,
     preview: usize,
+    skip_first_n_lines: usize,
 ) ?ParserHandle {
     const data = data_ptr[0..data_len];
     const config = ParserConfig{
@@ -541,6 +565,7 @@ export fn csv_init_buffer_with_config(
         .skip_empty_rows = skip_empty_rows,
         .comment_char = comment_char,
         .preview = preview,
+        .skip_first_n_lines = skip_first_n_lines,
     };
     const parser = Parser.initFromBuffer(global_allocator, data, config) catch return null;
     return @ptrCast(parser);

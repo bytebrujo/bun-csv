@@ -27,6 +27,8 @@ export interface CSVParserOptions<T = Record<string, string>> {
   comments?: boolean | string;
   /** Maximum number of data rows to parse (default: 0 = unlimited). Header row is not counted. */
   preview?: number;
+  /** Number of raw lines to skip before parsing begins (default: 0). Useful for files with metadata preambles. */
+  skipFirstNLines?: number;
   /** File encoding (default: auto-detect) */
   encoding?: string;
   /** Schema for typed access */
@@ -123,6 +125,7 @@ export class CSVParser<T = Record<string, string>>
       config.skipEmptyRows,
       config.commentChar,
       config.preview,
+      config.skipFirstNLines,
     ) as number;
 
     if (!this.handle) {
@@ -158,6 +161,7 @@ export class CSVParser<T = Record<string, string>>
       config.skipEmptyRows,
       config.commentChar,
       config.preview,
+      config.skipFirstNLines,
     ) as number;
 
     if (!this.handle) {
@@ -530,6 +534,7 @@ export class CSVParser<T = Record<string, string>>
       skipEmptyRows: this.options.skipEmptyRows ?? true,
       commentChar,
       preview: this.options.preview ?? 0,
+      skipFirstNLines: this.options.skipFirstNLines ?? 0,
     };
   }
 
@@ -591,6 +596,7 @@ export class CSVParser<T = Record<string, string>>
         config.skipEmptyRows,
         config.commentChar,
         config.preview,
+        config.skipFirstNLines,
       ) as number;
 
       if (!this.handle) {

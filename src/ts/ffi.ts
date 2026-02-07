@@ -40,6 +40,7 @@ export interface NativeLib {
     skipEmptyRows: boolean,
     commentChar: number,
     preview: number,
+    skipFirstNLines: number,
   ) => number | null;
   csv_init_buffer: (data: Uint8Array, len: number) => number | null;
   csv_init_buffer_with_config: (
@@ -52,6 +53,7 @@ export interface NativeLib {
     skipEmptyRows: boolean,
     commentChar: number,
     preview: number,
+    skipFirstNLines: number,
   ) => number | null;
   csv_next_row: (handle: number) => boolean;
   csv_get_field_count: (handle: number) => number;
@@ -181,7 +183,7 @@ export function loadNativeLibrary(): NativeLib {
       returns: FFIType.ptr,
     },
     csv_init_with_config: {
-      args: [FFIType.ptr, FFIType.u8, FFIType.u8, FFIType.u8, FFIType.bool, FFIType.bool, FFIType.u8, FFIType.u64],
+      args: [FFIType.ptr, FFIType.u8, FFIType.u8, FFIType.u8, FFIType.bool, FFIType.bool, FFIType.u8, FFIType.u64, FFIType.u64],
       returns: FFIType.ptr,
     },
     csv_init_buffer: {
@@ -189,7 +191,7 @@ export function loadNativeLibrary(): NativeLib {
       returns: FFIType.ptr,
     },
     csv_init_buffer_with_config: {
-      args: [FFIType.ptr, FFIType.u64, FFIType.u8, FFIType.u8, FFIType.u8, FFIType.bool, FFIType.bool, FFIType.u8, FFIType.u64],
+      args: [FFIType.ptr, FFIType.u64, FFIType.u8, FFIType.u8, FFIType.u8, FFIType.bool, FFIType.bool, FFIType.u8, FFIType.u64, FFIType.u64],
       returns: FFIType.ptr,
     },
     csv_next_row: {
