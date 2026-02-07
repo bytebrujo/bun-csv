@@ -106,6 +106,8 @@ export interface NativeLib {
   // Encoding
   csv_detect_encoding: (data: Uint8Array, len: number) => number;
   csv_detect_bom: (data: Uint8Array, len: number) => number;
+  // Delimiter detection
+  csv_detect_delimiter: (data: Uint8Array, len: number, candidates: Uint8Array | null, numCandidates: number, quoteChar: number) => number;
 }
 
 /** Library handle singleton */
@@ -385,6 +387,11 @@ export function loadNativeLibrary(): NativeLib {
     csv_detect_bom: {
       args: [FFIType.ptr, FFIType.u64],
       returns: FFIType.u64,
+    },
+    // Delimiter detection
+    csv_detect_delimiter: {
+      args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.u8],
+      returns: FFIType.u8,
     },
   });
 

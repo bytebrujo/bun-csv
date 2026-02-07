@@ -4,6 +4,7 @@ const simd = @import("simd.zig");
 const iconv = @import("iconv.zig");
 const mmap = @import("mmap.zig");
 pub const dataframe = @import("dataframe.zig");
+pub const detect = @import("detect.zig");
 
 // Only import parallel module on platforms that support threading
 const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
@@ -1477,6 +1478,28 @@ export fn csv_detect_bom(data_ptr: [*c]const u8, data_len: usize) usize {
         return detected.bom_len;
     }
     return 0;
+}
+
+/// Detect the most likely delimiter in CSV data.
+/// candidates_ptr: pointer to array of candidate delimiter bytes (ignored if num_candidates=0)
+/// num_candidates: number of candidates (0 to use defaults: comma, tab, pipe, semicolon)
+/// quote_char: the quote character to use during detection
+/// Returns the detected delimiter byte.
+export fn csv_detect_delimiter(
+    data_ptr: [*c]const u8,
+    data_len: usize,
+    candidates_ptr: [*c]const u8,
+    num_candidates: usize,
+    quote_char: u8,
+) u8 {
+    const data = data_ptr[0..data_len];
+    const candidates = if (num_candidates > 0)
+        candidates_ptr[0..num_candidates]
+    else
+        &detect.DEFAULT_CANDIDATES;
+
+    const result = detect.detectDelimiter(data, candidates, quote_char);
+    return result.delimiter;
 }
 
 // ============================================================================
