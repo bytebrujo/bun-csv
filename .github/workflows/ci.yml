@@ -51,23 +51,27 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-linux-gnu
             lib: libturbocsv.so
+            lib_dir: lib
           - os: linux
             arch: arm64
             runner: ubuntu-24.04-arm
             target: aarch64-linux-gnu
             lib: libturbocsv.so
+            lib_dir: lib
           # macOS - build natively (no target flag) to use system iconv
           - os: macos
             arch: arm64
             runner: macos-latest
             target: ""
             lib: libturbocsv.dylib
-          # Windows
+            lib_dir: lib
+          # Windows - Zig outputs DLLs to bin/ not lib/
           - os: windows
             arch: x64
             runner: windows-latest
             target: x86_64-windows-gnu
             lib: turbocsv.dll
+            lib_dir: bin
 
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}
-          path: zig-out/lib/${{ matrix.lib }}
+          path: zig-out/${{ matrix.lib_dir }}/${{ matrix.lib }}
           retention-days: 7
 
   # TODO: WASM build needs refactoring to avoid:
