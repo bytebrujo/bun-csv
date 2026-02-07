@@ -13,12 +13,16 @@ export { CacheLimitStatus, Encoding };
 
 /** Parser options */
 export interface CSVParserOptions<T = Record<string, string>> {
-  /** Field delimiter (default: auto-detect) */
+  /** Field delimiter (default: ",") */
   delimiter?: string;
   /** Quote character (default: ") */
   quoteChar?: string;
+  /** Escape character for quotes (default: same as quoteChar) */
+  escapeChar?: string;
   /** Whether first row is header (default: true) */
   hasHeader?: boolean;
+  /** Skip empty rows (default: true) */
+  skipEmptyRows?: boolean;
   /** File encoding (default: auto-detect) */
   encoding?: string;
   /** Schema for typed access */
@@ -70,6 +74,9 @@ export class CSVParser<T = Record<string, string>>
     this.options = {
       hasHeader: true,
       quoteChar: '"',
+      escapeChar: options.escapeChar ?? options.quoteChar ?? '"',
+      delimiter: ',',
+      skipEmptyRows: true,
       ...options,
     };
 
@@ -83,6 +90,10 @@ export class CSVParser<T = Record<string, string>>
     if (typeof source === "string" && !source.startsWith("http")) {
       this.sourcePath = source;
       this.initFromFile(source);
+    } else if (source instanceof Uint8Array) {
+      this.initFromBuffer(source);
+    } else if (source instanceof ArrayBuffer) {
+      this.initFromBuffer(new Uint8Array(source));
     }
   }
 
@@ -97,7 +108,20 @@ export class CSVParser<T = Record<string, string>>
     const lib = loadNativeLibrary();
     const pathBytes = toCString(path);
 
-    this.handle = lib.csv_init(pathBytes) as number;
+    const delimiter = (this.options.delimiter ?? ",").charCodeAt(0);
+    const quoteChar = (this.options.quoteChar ?? '"').charCodeAt(0);
+    const escapeChar = (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0);
+    const hasHeader = this.options.hasHeader ?? true;
+    const skipEmptyRows = this.options.skipEmptyRows ?? true;
+
+    this.handle = lib.csv_init_with_config(
+      pathBytes,
+      delimiter,
+      quoteChar,
+      escapeChar,
+      hasHeader,
+      skipEmptyRows,
+    ) as number;
 
     if (!this.handle) {
       throw new Error(`Failed to open CSV file: ${path}`);
@@ -120,7 +144,22 @@ export class CSVParser<T = Record<string, string>>
     }
 
     const lib = loadNativeLibrary();
-    this.handle = lib.csv_init_buffer(data, data.length) as number;
+
+    const delimiter = (this.options.delimiter ?? ",").charCodeAt(0);
+    const quoteChar = (this.options.quoteChar ?? '"').charCodeAt(0);
+    const escapeChar = (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0);
+    const hasHeader = this.options.hasHeader ?? true;
+    const skipEmptyRows = this.options.skipEmptyRows ?? true;
+
+    this.handle = lib.csv_init_buffer_with_config(
+      data,
+      data.length,
+      delimiter,
+      quoteChar,
+      escapeChar,
+      hasHeader,
+      skipEmptyRows,
+    ) as number;
 
     if (!this.handle) {
       throw new Error("Failed to initialize parser from buffer");
@@ -517,9 +556,22 @@ export class CSVParser<T = Record<string, string>>
       // Close current handle
       lib.csv_close(this.handle);
 
-      // Re-open
+      // Re-open with same config
       const pathBytes = toCString(this.sourcePath);
-      this.handle = lib.csv_init(pathBytes) as number;
+      const delimiter = (this.options.delimiter ?? ",").charCodeAt(0);
+      const quoteChar = (this.options.quoteChar ?? '"').charCodeAt(0);
+      const escapeChar = (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0);
+      const hasHeader = this.options.hasHeader ?? true;
+      const skipEmptyRows = this.options.skipEmptyRows ?? true;
+
+      this.handle = lib.csv_init_with_config(
+        pathBytes,
+        delimiter,
+        quoteChar,
+        escapeChar,
+        hasHeader,
+        skipEmptyRows,
+      ) as number;
 
       if (!this.handle) {
         throw new Error("Failed to re-open file for caching");

@@ -31,7 +31,24 @@ export const MAX_BATCH_FIELDS = 64;
 /** Native library symbols */
 export interface NativeLib {
   csv_init: (path: Uint8Array) => number | null;
+  csv_init_with_config: (
+    path: Uint8Array,
+    delimiter: number,
+    quoteChar: number,
+    escapeChar: number,
+    hasHeader: boolean,
+    skipEmptyRows: boolean,
+  ) => number | null;
   csv_init_buffer: (data: Uint8Array, len: number) => number | null;
+  csv_init_buffer_with_config: (
+    data: Uint8Array,
+    len: number,
+    delimiter: number,
+    quoteChar: number,
+    escapeChar: number,
+    hasHeader: boolean,
+    skipEmptyRows: boolean,
+  ) => number | null;
   csv_next_row: (handle: number) => boolean;
   csv_get_field_count: (handle: number) => number;
   csv_get_field_ptr: (handle: number, col: number) => number | null;
@@ -159,8 +176,16 @@ export function loadNativeLibrary(): NativeLib {
       args: [FFIType.ptr],
       returns: FFIType.ptr,
     },
+    csv_init_with_config: {
+      args: [FFIType.ptr, FFIType.u8, FFIType.u8, FFIType.u8, FFIType.bool, FFIType.bool],
+      returns: FFIType.ptr,
+    },
     csv_init_buffer: {
       args: [FFIType.ptr, FFIType.u64],
+      returns: FFIType.ptr,
+    },
+    csv_init_buffer_with_config: {
+      args: [FFIType.ptr, FFIType.u64, FFIType.u8, FFIType.u8, FFIType.u8, FFIType.bool, FFIType.bool],
       returns: FFIType.ptr,
     },
     csv_next_row: {
