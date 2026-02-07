@@ -102,6 +102,8 @@ export interface CSVParserOptions<T = Record<string, string>> {
   chunk?: (results: ChunkResult, parser: ParserHandle) => void;
   /** Rows per chunk when using chunk callback (default: 1000) */
   chunkSize?: number;
+  /** Explicitly treat string source as a URL to download (default: auto-detect http/https) */
+  download?: boolean;
 }
 
 /** Parse metadata (PapaParse-compatible) */
@@ -149,8 +151,9 @@ export class CSVParser<T = Record<string, string>>
   private headerRow: string[] | null = null;
   private startTime: number = 0;
   private closed: boolean = false;
-  private aborted: boolean = false;
   private truncated: boolean = false;
+  private needsAsyncInit: boolean = false;
+  private loaded: boolean = false;
   private sourcePath: string | null = null;
 
   // Error tracking
@@ -189,14 +192,23 @@ export class CSVParser<T = Record<string, string>>
       this.options.delimiter = this.autoDetectDelimiter(source);
     }
 
-    // Initialize immediately for file paths
-    if (typeof source === "string" && !source.startsWith("http")) {
+    // Determine input type and initialize
+    const isUrl = typeof source === "string" &&
+      (source.startsWith("http://") || source.startsWith("https://") || options.download === true);
+
+    if (isUrl || source instanceof ReadableStream) {
+      // Async sources: defer initialization until load() is called
+      this.needsAsyncInit = true;
+    } else if (typeof source === "string") {
       this.sourcePath = source;
       this.initFromFile(source);
+      this.loaded = true;
     } else if (source instanceof Uint8Array) {
       this.initFromBuffer(source);
+      this.loaded = true;
     } else if (source instanceof ArrayBuffer) {
       this.initFromBuffer(new Uint8Array(source));
+      this.loaded = true;
     }
   }
 
@@ -270,6 +282,59 @@ export class CSVParser<T = Record<string, string>>
     if (this.options.hasHeader) {
       this.parseHeaders();
     }
+  }
+
+  /**
+   * Load data from async sources (URL or ReadableStream).
+   * Must be called before iteration when using URL or stream input.
+   * The async iterator calls this automatically.
+   */
+  async load(): Promise<void> {
+    if (this.loaded) return;
+    if (!this.needsAsyncInit) {
+      throw new Error("load() is only needed for URL or ReadableStream sources");
+    }
+
+    const source = this.source;
+
+    if (typeof source === "string") {
+      // URL source: fetch and buffer
+      const response = await fetch(source);
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch CSV from ${source}: ${response.status} ${response.statusText}`
+        );
+      }
+      const buffer = new Uint8Array(await response.arrayBuffer());
+      this.initFromBuffer(buffer);
+    } else if (source instanceof ReadableStream) {
+      // ReadableStream source: consume all chunks
+      const chunks: Uint8Array[] = [];
+      const reader = source.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value instanceof Uint8Array) {
+          chunks.push(value);
+        } else {
+          chunks.push(new TextEncoder().encode(String(value)));
+        }
+      }
+
+      // Concatenate chunks into a single buffer
+      const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+      const buffer = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const chunk of chunks) {
+        buffer.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      this.initFromBuffer(buffer);
+    }
+
+    this.loaded = true;
   }
 
   /**
@@ -991,6 +1056,12 @@ export class CSVParser<T = Record<string, string>>
    * Synchronous iterator for for-of loops.
    */
   *[Symbol.iterator](): Iterator<CSVRow<T>> {
+    if (this.needsAsyncInit && !this.loaded) {
+      throw new Error(
+        "Parser requires async loading for URL or ReadableStream sources. " +
+        "Call await parser.load() first, or use for-await-of."
+      );
+    }
     if (!this.handle) {
       throw new Error("Parser not initialized");
     }
@@ -1036,8 +1107,13 @@ export class CSVParser<T = Record<string, string>>
 
   /**
    * Async iterator for non-blocking iteration.
+   * Automatically loads URL/ReadableStream sources if not yet loaded.
    */
   async *[Symbol.asyncIterator](): AsyncIterator<CSVRow<T>> {
+    // Auto-load for async sources
+    if (this.needsAsyncInit && !this.loaded) {
+      await this.load();
+    }
     if (!this.handle) {
       throw new Error("Parser not initialized");
     }
