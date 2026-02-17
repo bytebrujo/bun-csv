@@ -29,7 +29,7 @@ export default function Hero() {
         </p>
 
         <p class="subtitle">
-          Built with Zig for native performance. DataFrame API, Copy-on-Write, and full-featured CLI.
+          Built with Zig for native performance. Now with Fast Mode, security hardening, and 22 CLI flags.
         </p>
 
         <div class="install-box">

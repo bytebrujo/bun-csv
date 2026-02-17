@@ -1,4 +1,4 @@
-import { JSX } from "solid-js";
+import { JSX, For } from "solid-js";
 import "./Features.css";
 
 const features = [
@@ -8,19 +8,29 @@ const features = [
     description: "ARM64 NEON and x86 SSE2 vector instructions for parallel character scanning at native speed.",
   },
   {
+    icon: "security",
+    title: "Security & Validation",
+    description: "CSV injection protection, structured error reporting, skip bad rows, size limits, column relaxation.",
+  },
+  {
     icon: "dataframe",
     title: "DataFrame API",
     description: "Pandas-like operations: select, filter, sort, groupBy, join with lazy evaluation.",
   },
   {
-    icon: "memory",
-    title: "Memory-Mapped Files",
-    description: "Process files larger than RAM. Zero-copy parsing keeps data out of the JS heap.",
+    icon: "fast",
+    title: "Fast Mode",
+    description: "TypeScript-only parser for clean data. Dynamic typing, cast functions, nested JSON support.",
   },
   {
     icon: "cli",
-    title: "Full CLI",
-    description: "11 commands for data exploration: head, tail, filter, sort, convert, stats, and more.",
+    title: "22 CLI Flags",
+    description: "All parser options accessible via CLI: trim, comments, range processing, error handling, and more.",
+  },
+  {
+    icon: "memory",
+    title: "Memory-Mapped Files",
+    description: "Process files larger than RAM. Zero-copy parsing keeps data out of the JS heap.",
   },
   {
     icon: "rfc",
@@ -38,6 +48,17 @@ const icons: Record<string, () => JSX.Element> = {
   simd: () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+    </svg>
+  ),
+  security: () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+      <polyline points="9 12 12 15 16 10"></polyline>
+    </svg>
+  ),
+  fast: () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
     </svg>
   ),
   dataframe: () => (
@@ -94,15 +115,17 @@ export default function Features() {
         <h2>Features</h2>
 
         <div class="feature-grid">
-          {features.map((feature) => (
-            <div class="feature-card">
-              <div class="feature-icon">
-                {icons[feature.icon]()}
+          <For each={features}>
+            {(feature) => (
+              <div class="feature-card">
+                <div class="feature-icon">
+                  {icons[feature.icon]()}
+                </div>
+                <h3>{feature.title}</h3>
+                <p>{feature.description}</p>
               </div>
-              <h3>{feature.title}</h3>
-              <p>{feature.description}</p>
-            </div>
-          ))}
+            )}
+          </For>
         </div>
       </div>
     </section>

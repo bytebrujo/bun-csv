@@ -20,6 +20,12 @@
   }
 }
 
+@media (min-width: 1200px) {
+  .feature-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
 .feature-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);

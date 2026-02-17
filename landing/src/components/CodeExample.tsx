@@ -1,4 +1,3 @@
-"use client";
 import { createSignal, For, onMount } from "solid-js";
 import Prism from "prismjs";
 import "prismjs/components/prism-typescript";
@@ -20,6 +19,43 @@ for (const row of parser) {
 }
 
 parser.close();`,
+  },
+  {
+    id: "advanced",
+    label: "Advanced (v0.3.0)",
+    lang: "typescript",
+    code: `import { CSVParser, unparse, flatten } from "turbocsv";
+
+// Robust parsing with error handling
+const parser = new CSVParser("messy.csv", {
+  trim: true,                     // Clean whitespace
+  skipRecordsWithError: true,     // Skip bad rows
+  comments: true,                  // Skip # prefixed lines
+  duplicateHeaders: "rename",      // Handle duplicate columns
+  dynamicTyping: true,             // Auto-convert types
+  maxRecordSize: 10000,            // Reject huge rows
+  cast: {                          // Custom transformers
+    price: (val) => parseFloat(val.replace("$", "")),
+    date: (val) => new Date(val)
+  }
+});
+
+// Process with structured error handling
+for (const row of parser) {
+  try {
+    processRow(row);
+  } catch (error) {
+    if (error.code === "TooFewFields") {
+      console.log(\`Row \${error.row}: Missing fields\`);
+    }
+  }
+}
+
+// Secure CSV output
+const csv = unparse(data, {
+  escapeFormulae: true,    // Prevent CSV injection
+  flattenObjects: true     // Handle nested JSON
+});`,
   },
   {
     id: "dataframe",
@@ -47,22 +83,26 @@ parser.close();`,
   },
   {
     id: "cli",
-    label: "CLI",
+    label: "CLI (v0.3.0)",
     lang: "bash",
-    code: `# Count rows
-turbocsv count data.csv
+    code: `# Trim whitespace and skip bad rows
+turbocsv head --trim --skip-errors data.csv
 
-# Preview data
-turbocsv head -n 10 data.csv
-turbocsv tail -n 5 --format table data.csv
+# Fast mode with dynamic typing
+turbocsv head --fast --dynamic-typing --format json data.csv
 
-# Filter and transform
-turbocsv filter "age > 21" data.csv
-turbocsv sort -c name --order asc data.csv
-turbocsv select "name,email,phone" data.csv
+# Validate with structured error reporting
+turbocsv validate data.csv
+# Output: ERROR [TooFewFields] at row 42: Expected 5 fields, got 3
 
-# Convert formats
-turbocsv convert --to json data.csv -o data.json`,
+# Process specific range with comments
+turbocsv head --from-line 5 --to-line 20 --comments data.csv
+
+# Security: escape formula injection
+turbocsv convert --escape-formulae data.csv -o safe.csv
+
+# Handle duplicate headers
+turbocsv head --duplicate-headers rename data.csv`,
   },
 ];
 
