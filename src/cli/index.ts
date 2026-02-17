@@ -5,6 +5,7 @@
 
 import { parseArgs } from "util";
 import { existsSync, statSync } from "fs";
+import pkg from "../../package.json";
 import { count } from "./commands/count";
 import { head } from "./commands/head";
 import { tail } from "./commands/tail";
@@ -107,7 +108,7 @@ Examples:
   cat data.csv | turbocsv count
 `;
 
-const VERSION = "0.1.0";
+const VERSION = pkg.version;
 
 /** Check if output is TTY for auto-formatting */
 function isTTY(): boolean {
