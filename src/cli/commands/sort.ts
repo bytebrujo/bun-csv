@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { formatOutput, printSummary } from "../index";
+import { formatOutput, printSummary, type ParserFlags } from "../index";
 
 interface SortOptions {
   delimiter?: string;
@@ -13,6 +13,7 @@ interface SortOptions {
   fileSize?: number;
   column: string;
   desc: boolean;
+  parserOpts?: ParserFlags;
 }
 
 export async function sort(
@@ -24,6 +25,7 @@ export async function sort(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   // Load all rows into DataFrame for sorting

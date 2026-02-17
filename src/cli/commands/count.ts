@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { printSummary } from "../index";
+import { printSummary, type ParserFlags } from "../index";
 
 interface CountOptions {
   delimiter?: string;
@@ -11,6 +11,7 @@ interface CountOptions {
   hasHeader: boolean;
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
+  parserOpts?: ParserFlags;
 }
 
 export async function count(
@@ -22,6 +23,7 @@ export async function count(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   let rowCount = 0;

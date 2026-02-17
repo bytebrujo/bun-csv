@@ -1,0 +1,8 @@
+# This file contains employee data
+# Generated: 2024-01-15
+name,age,department,salary
+Alice,30,Engineering,120000
+Bob,25,Marketing,85000
+# Mid-file comment
+Charlie,35,Engineering,140000
+Diana,28,Design,95000

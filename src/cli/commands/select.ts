@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { formatOutput, printSummary } from "../index";
+import { formatOutput, printSummary, type ParserFlags } from "../index";
 
 interface SelectOptions {
   delimiter?: string;
@@ -12,6 +12,7 @@ interface SelectOptions {
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
   columns: string;
+  parserOpts?: ParserFlags;
 }
 
 export async function select(
@@ -23,6 +24,7 @@ export async function select(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   // Parse column specification (can be names or indices)

@@ -1,0 +1,6 @@
+name,email,notes
+Alice,alice@example.com,Regular user
+Bob,bob@example.com,=CMD('calc')
+Charlie,charlie@example.com,+1-555-0100
+Diana,diana@example.com,@SUM(A1:A10)
+Eve,eve@example.com,Normal notes here

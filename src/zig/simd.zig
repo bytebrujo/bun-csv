@@ -127,6 +127,11 @@ pub const SimdScanner = struct {
         var field_start = start;
         var in_quote = false;
 
+        // When an escaped quote pair ("") straddles a SIMD chunk boundary,
+        // we can't clear the second quote's bit in the current mask.
+        // This flag tells us to skip it when processing the next chunk.
+        var skip_next_quote = false;
+
         // Track if current field started with a quote
         var current_field_quoted = data[start] == self.quote_char;
 
@@ -149,12 +154,17 @@ pub const SimdScanner = struct {
                 const byte = data[abs_pos];
 
                 if (byte == self.quote_char) {
-                    // Check for escaped quote (two quotes in a row)
-                    if (abs_pos + 1 < data.len and data[abs_pos + 1] == self.quote_char) {
+                    if (skip_next_quote) {
+                        // This is the second quote of a cross-boundary escaped pair — skip it
+                        skip_next_quote = false;
+                    } else if (abs_pos + 1 < data.len and data[abs_pos + 1] == self.quote_char) {
                         // Escaped quote - clear next bit if in this vector
                         const next_offset = offset + 1;
                         if (next_offset < VECTOR_WIDTH) {
                             interesting &= ~(@as(MaskInt, 1) << @intCast(next_offset));
+                        } else {
+                            // Escaped pair crosses chunk boundary — flag second quote for skip
+                            skip_next_quote = true;
                         }
                     } else {
                         // Toggle quote state
@@ -219,6 +229,12 @@ pub const SimdScanner = struct {
             const byte = data[pos];
 
             if (byte == self.quote_char) {
+                if (skip_next_quote) {
+                    // Second quote of a cross-boundary escaped pair — skip it
+                    skip_next_quote = false;
+                    pos += 1;
+                    continue;
+                }
                 // Check for escaped quote
                 if (pos + 1 < data.len and data[pos + 1] == self.quote_char) {
                     pos += 2;

@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { formatOutput, printSummary } from "../index";
+import { formatOutput, printSummary, type ParserFlags } from "../index";
 
 interface StatsOptions {
   delimiter?: string;
@@ -11,6 +11,7 @@ interface StatsOptions {
   hasHeader: boolean;
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
+  parserOpts?: ParserFlags;
 }
 
 interface ColumnStats {
@@ -33,6 +34,7 @@ export async function stats(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   const headers = parser.getHeaders() ?? [];

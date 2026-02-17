@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { formatOutput, printSummary } from "../index";
+import { formatOutput, printSummary, type ParserFlags } from "../index";
 
 interface TailOptions {
   delimiter?: string;
@@ -12,6 +12,7 @@ interface TailOptions {
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
   n: number;
+  parserOpts?: ParserFlags;
 }
 
 export async function tail(
@@ -23,6 +24,7 @@ export async function tail(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   // Buffer the last N rows using a circular buffer approach

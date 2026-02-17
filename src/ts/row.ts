@@ -5,6 +5,7 @@
 import { loadNativeLibrary, MAX_BATCH_FIELDS, type NativeLib } from "./ffi";
 import { toArrayBuffer, type Pointer } from "bun:ffi";
 import type { Schema, SchemaField, ColumnType } from "./types";
+import { unflatten } from "./nested";
 
 /** Module-level cached library reference */
 let cachedLib: NativeLib | null = null;
@@ -48,6 +49,26 @@ export type DynamicTypingConfig = boolean | Record<string, boolean> | ((field: s
 /** Transform callback type */
 export type TransformFn = (value: string, field: string | number) => string;
 
+/** Trim configuration for field values */
+export interface TrimConfig {
+  ltrim: boolean;
+  rtrim: boolean;
+}
+
+/** Cast function context */
+export interface CastContext {
+  column: string | number;
+  index: number;
+  row: number;
+  header: boolean;
+}
+
+/** Cast function type */
+export type CastFunction = (value: string, context: CastContext) => unknown;
+
+/** Cast configuration: function or per-column record */
+export type CastConfig = CastFunction | Record<string, (value: string) => unknown> | null;
+
 export class CSVRow<T = Record<string, string>> {
   private handle: number;
   private fieldCount: number;
@@ -58,6 +79,17 @@ export class CSVRow<T = Record<string, string>> {
   private rowStringData: RowStringData | null = null;
   private dynamicTyping: DynamicTypingConfig;
   private transform: TransformFn | null;
+  private trimConfig: TrimConfig | null;
+  private castConfig: CastConfig;
+
+  /** Pre-split fields for fast mode (no FFI) */
+  private preloadedFields: string[] | null = null;
+
+  /** 0-based data row index (excluding header) */
+  readonly index: number;
+
+  /** Column names (null if no headers) */
+  readonly columns: string[] | null;
 
   constructor(
     handle: number,
@@ -66,6 +98,9 @@ export class CSVRow<T = Record<string, string>> {
     schema: Schema<T> | null = null,
     dynamicTyping: DynamicTypingConfig = false,
     transform: TransformFn | null = null,
+    trimConfig: TrimConfig | null = null,
+    rowIndex: number = 0,
+    castConfig: CastConfig = null,
   ) {
     this.handle = handle;
     this.fieldCount = fieldCount;
@@ -74,6 +109,38 @@ export class CSVRow<T = Record<string, string>> {
     this.cache = new Map();
     this.dynamicTyping = dynamicTyping;
     this.transform = transform;
+    this.trimConfig = trimConfig;
+    this.index = rowIndex;
+    this.columns = headers ? Array.from(headers.keys()) : null;
+    this.castConfig = castConfig;
+  }
+
+  /**
+   * Create a CSVRow from pre-split string fields (no FFI, used by fast mode).
+   */
+  static fromFields<T = Record<string, string>>(
+    fields: string[],
+    headers: Map<string, number> | null = null,
+    schema: Schema<T> | null = null,
+    dynamicTyping: DynamicTypingConfig = false,
+    transform: TransformFn | null = null,
+    trimConfig: TrimConfig | null = null,
+    rowIndex: number = 0,
+    castConfig: CastConfig = null,
+  ): CSVRow<T> {
+    const row = new CSVRow<T>(
+      0, // no native handle
+      fields.length,
+      headers,
+      schema,
+      dynamicTyping,
+      transform,
+      trimConfig,
+      rowIndex,
+      castConfig,
+    );
+    row.preloadedFields = fields;
+    return row;
   }
 
   /**
@@ -176,6 +243,17 @@ export class CSVRow<T = Record<string, string>> {
   }
 
   /**
+   * Apply configured trimming to a field value.
+   */
+  private applyTrim(value: string): string {
+    if (!this.trimConfig) return value;
+    if (this.trimConfig.ltrim && this.trimConfig.rtrim) return value.trim();
+    if (this.trimConfig.ltrim) return value.trimStart();
+    if (this.trimConfig.rtrim) return value.trimEnd();
+    return value;
+  }
+
+  /**
    * Get raw field value by column index or name.
    * Returns null for empty unquoted fields (SQL-style NULL).
    * Automatically unescapes quoted fields (removes quotes, handles "").
@@ -187,6 +265,19 @@ export class CSVRow<T = Record<string, string>> {
     // Check cache first
     if (this.cache.has(colIndex)) {
       return this.cache.get(colIndex)!;
+    }
+
+    // Fast mode: pre-split fields, no FFI
+    if (this.preloadedFields) {
+      if (colIndex >= this.preloadedFields.length) return null;
+      let value = this.preloadedFields[colIndex]!;
+      if (value === "") return null;
+      value = this.applyTrim(value);
+      if (this.transform) {
+        value = this.transform(value, this.resolveFieldName(colIndex));
+      }
+      this.cache.set(colIndex, value);
+      return value;
     }
 
     // Try batch path first (more efficient for multiple field access)
@@ -231,6 +322,7 @@ export class CSVRow<T = Record<string, string>> {
         value = TEXT_DECODER.decode(buffer);
       }
 
+      value = this.applyTrim(value);
       if (this.transform) {
         value = this.transform(value, this.resolveFieldName(colIndex));
       }
@@ -276,6 +368,7 @@ export class CSVRow<T = Record<string, string>> {
       value = TEXT_DECODER.decode(buffer);
     }
 
+    value = this.applyTrim(value);
     if (this.transform) {
       value = this.transform(value, this.resolveFieldName(colIndex));
     }
@@ -362,17 +455,56 @@ export class CSVRow<T = Record<string, string>> {
   }
 
   /**
+   * Apply cast function to a field value.
+   */
+  private applyCast(value: unknown, columnName: string | number, colIndex: number): unknown {
+    if (!this.castConfig) return value;
+    if (value === null) return null;
+
+    if (typeof this.castConfig === "function") {
+      return this.castConfig(String(value), {
+        column: columnName,
+        index: colIndex,
+        row: this.index,
+        header: false,
+      });
+    }
+
+    // Record form: look up by column name
+    if (typeof columnName === "string" && columnName in this.castConfig) {
+      return this.castConfig[columnName]!(String(value));
+    }
+
+    return value;
+  }
+
+  /**
+   * Coerce a field value through dynamicTyping and/or cast pipeline.
+   */
+  private coerceField(raw: string | null, fieldName: string | number, colIndex: number): unknown {
+    let val: unknown = raw;
+    if (this.dynamicTyping) {
+      val = this.dynamicCoerce(raw, fieldName);
+    }
+    if (this.castConfig) {
+      val = this.applyCast(val, fieldName, colIndex);
+    }
+    return val;
+  }
+
+  /**
    * Convert row to plain object using headers.
-   * When dynamicTyping is enabled, values are auto-coerced.
+   * When dynamicTyping or cast is enabled, values are coerced.
    */
   toObject(): Record<string, any> {
     const obj: Record<string, any> = {};
+    const shouldCoerce = !!(this.dynamicTyping || this.castConfig);
 
     if (this.headers) {
       for (const [name, index] of this.headers) {
         if (index < this.fieldCount) {
           const raw = this.get(index as keyof T | number);
-          obj[name] = this.dynamicTyping ? this.dynamicCoerce(raw, name) : raw;
+          obj[name] = shouldCoerce ? this.coerceField(raw, name, index) : raw;
         } else {
           obj[name] = null;
         }
@@ -389,7 +521,7 @@ export class CSVRow<T = Record<string, string>> {
     } else {
       for (let i = 0; i < this.fieldCount; i++) {
         const raw = this.get(i);
-        obj[`col${i}`] = this.dynamicTyping ? this.dynamicCoerce(raw, i) : raw;
+        obj[`col${i}`] = shouldCoerce ? this.coerceField(raw, i, i) : raw;
       }
     }
 
@@ -397,14 +529,26 @@ export class CSVRow<T = Record<string, string>> {
   }
 
   /**
+   * Convert row to nested object using dot-notation headers.
+   * Headers like "user.name" and "user.age" become { user: { name: ..., age: ... } }.
+   *
+   * @param separator Separator for nested keys (default: ".")
+   */
+  toNestedObject(separator: string = "."): Record<string, any> {
+    const flat = this.toObject();
+    return unflatten(flat, separator);
+  }
+
+  /**
    * Convert row to array of values.
-   * When dynamicTyping is enabled, values are auto-coerced.
+   * When dynamicTyping or cast is enabled, values are coerced.
    */
   toArray(): any[] {
     const arr: any[] = [];
+    const shouldCoerce = !!(this.dynamicTyping || this.castConfig);
     for (let i = 0; i < this.fieldCount; i++) {
       const raw = this.get(i);
-      arr.push(this.dynamicTyping ? this.dynamicCoerce(raw, i) : raw);
+      arr.push(shouldCoerce ? this.coerceField(raw, this.resolveFieldName(i), i) : raw);
     }
     return arr;
   }

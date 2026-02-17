@@ -18,6 +18,32 @@ import { validate } from "./commands/validate";
 import { stats } from "./commands/stats";
 import { loadConfig, mergeConfig } from "./config";
 
+/** Parser flags that map directly to CSVParserOptions */
+export interface ParserFlags {
+  encoding?: string;
+  quoteChar?: string;
+  escapeChar?: string;
+  trim?: boolean;
+  ltrim?: boolean;
+  rtrim?: boolean;
+  skipRecordsWithError?: boolean;
+  skipRecordsWithEmptyValues?: boolean;
+  skipEmptyRows?: boolean | "greedy";
+  maxRecordSize?: number;
+  relaxColumnCount?: boolean;
+  relaxColumnCountLess?: boolean;
+  relaxColumnCountMore?: boolean;
+  fromLine?: number;
+  toLine?: number;
+  fastMode?: boolean;
+  duplicateHeaders?: "rename" | "error";
+  comments?: boolean;
+  dynamicTyping?: boolean;
+  preview?: number;
+  skipFirstNLines?: number;
+  delimitersToGuess?: string[];
+}
+
 const HELP = `
 turbocsv - High-performance CSV parser
 
@@ -36,18 +62,45 @@ Commands:
   benchmark   Measure parsing performance
 
 Options:
-  -h, --help       Show this help message
-  -v, --version    Show version
-  -d, --delimiter  Field delimiter (default: auto-detect)
-  -e, --encoding   File encoding (default: auto-detect)
-  --no-header      File has no header row
-  --format         Output format: table, csv, json (default: auto)
-  --color          Force colored output
-  --no-color       Disable colored output
+  -h, --help                Show this help message
+  -v, --version             Show version
+  -d, --delimiter           Field delimiter (default: auto-detect)
+  -e, --encoding            File encoding (default: auto-detect)
+  --no-header               File has no header row
+  --format                  Output format: table, csv, json (default: auto)
+  --color                   Force colored output
+  --no-color                Disable colored output
+
+Parser flags:
+  --quote-char <c>          Quote character (default: ")
+  --escape-char <c>         Escape character (default: same as quote)
+  --trim                    Trim whitespace from both sides of fields
+  --ltrim                   Trim whitespace from left side of fields
+  --rtrim                   Trim whitespace from right side of fields
+  --skip-errors             Skip rows that cause parsing errors
+  --skip-empty-values       Skip records where all fields are empty
+  --skip-empty <mode>       Skip empty rows; "greedy" also skips whitespace-only
+  --max-record-size <n>     Maximum record size in bytes
+  --relax-columns           Allow inconsistent column counts
+  --relax-columns-less      Allow fewer columns than header
+  --relax-columns-more      Allow more columns than header
+  --from-line <n>           Start from line N (1-based)
+  --to-line <n>             Stop after line N (1-based)
+  --preview <n>             Parse only first N data rows
+  --skip-lines <n>          Skip first N raw lines before parsing
+  --fast                    Fast mode (no quote handling)
+  --duplicate-headers <m>   Handle duplicate headers: rename|error
+  --comments                Treat lines starting with # as comments
+  --dynamic-typing          Auto-convert values to JS types
+  --delimiters-to-guess <l> Delimiters for auto-detect (comma-separated)
 
 Examples:
   turbocsv count data.csv
   turbocsv head -n 10 data.csv
+  turbocsv head --trim data.csv
+  turbocsv head --skip-errors --relax-columns data.csv
+  turbocsv count --fast data.csv
+  turbocsv head --from-line 5 --to-line 10 data.csv
   turbocsv select name,age data.csv
   turbocsv filter "age > 18" data.csv
   turbocsv sort -c age --desc data.csv
@@ -168,6 +221,28 @@ async function main(): Promise<void> {
       to: { type: "string" },
       output: { type: "string", short: "o" },
       iterations: { type: "string" },
+      // Parser flags
+      "quote-char": { type: "string" },
+      "escape-char": { type: "string" },
+      trim: { type: "boolean" },
+      ltrim: { type: "boolean" },
+      rtrim: { type: "boolean" },
+      "skip-errors": { type: "boolean" },
+      "skip-empty-values": { type: "boolean" },
+      "skip-empty": { type: "string" },
+      "max-record-size": { type: "string" },
+      "relax-columns": { type: "boolean" },
+      "relax-columns-less": { type: "boolean" },
+      "relax-columns-more": { type: "boolean" },
+      "from-line": { type: "string" },
+      "to-line": { type: "string" },
+      preview: { type: "string" },
+      "skip-lines": { type: "string" },
+      fast: { type: "boolean" },
+      "duplicate-headers": { type: "string" },
+      comments: { type: "boolean" },
+      "dynamic-typing": { type: "boolean" },
+      "delimiters-to-guess": { type: "string" },
     },
     allowPositionals: true,
   });
@@ -233,6 +308,38 @@ async function main(): Promise<void> {
     fileConfig
   );
 
+  // Build parser flags from CLI args
+  const parserOpts: ParserFlags = {};
+  if (mergedConfig.encoding) parserOpts.encoding = mergedConfig.encoding;
+  if (values["quote-char"]) parserOpts.quoteChar = values["quote-char"];
+  if (values["escape-char"]) parserOpts.escapeChar = values["escape-char"];
+  if (values.trim) parserOpts.trim = true;
+  if (values.ltrim) parserOpts.ltrim = true;
+  if (values.rtrim) parserOpts.rtrim = true;
+  if (values["skip-errors"]) parserOpts.skipRecordsWithError = true;
+  if (values["skip-empty-values"]) parserOpts.skipRecordsWithEmptyValues = true;
+  if (values["skip-empty"] === "greedy") parserOpts.skipEmptyRows = "greedy";
+  if (values["max-record-size"]) parserOpts.maxRecordSize = parseInt(values["max-record-size"], 10);
+  if (values["relax-columns"]) parserOpts.relaxColumnCount = true;
+  if (values["relax-columns-less"]) parserOpts.relaxColumnCountLess = true;
+  if (values["relax-columns-more"]) parserOpts.relaxColumnCountMore = true;
+  if (values["from-line"]) parserOpts.fromLine = parseInt(values["from-line"], 10);
+  if (values["to-line"]) parserOpts.toLine = parseInt(values["to-line"], 10);
+  if (values.preview) parserOpts.preview = parseInt(values.preview, 10);
+  if (values["skip-lines"]) parserOpts.skipFirstNLines = parseInt(values["skip-lines"], 10);
+  if (values.fast) parserOpts.fastMode = true;
+  if (values["duplicate-headers"]) {
+    const mode = values["duplicate-headers"];
+    if (mode === "rename" || mode === "error") {
+      parserOpts.duplicateHeaders = mode;
+    }
+  }
+  if (values.comments) parserOpts.comments = true;
+  if (values["dynamic-typing"]) parserOpts.dynamicTyping = true;
+  if (values["delimiters-to-guess"]) {
+    parserOpts.delimitersToGuess = values["delimiters-to-guess"].split(",");
+  }
+
   // Common options
   const options = {
     delimiter: mergedConfig.delimiter,
@@ -240,6 +347,7 @@ async function main(): Promise<void> {
     hasHeader: mergedConfig.hasHeader ?? true,
     format: (mergedConfig.format ?? "auto") as "auto" | "table" | "csv" | "json",
     fileSize,
+    parserOpts,
   };
 
   try {

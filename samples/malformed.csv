@@ -1,0 +1,7 @@
+name,age,city
+Alice,30,NYC
+Bob,25
+Charlie,35,Chicago,extra_field
+Diana,,Boston
+"Eve,28,Unterminated quote
+Frank,40,Seattle

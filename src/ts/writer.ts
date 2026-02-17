@@ -18,6 +18,13 @@ export interface CSVWriterOptions {
   flushEvery?: number;
   /** Append to existing file */
   append?: boolean;
+  /**
+   * Escape formula injection in field values.
+   * When true, prefixes cells starting with =, +, -, @, \t, or \r with a single quote.
+   * When a RegExp, uses that pattern to detect formula prefixes to escape.
+   * (default: false)
+   */
+  escapeFormulae?: boolean | RegExp;
 }
 
 /**
@@ -48,6 +55,7 @@ export class CSVWriter {
       quoteStyle: options.quoteStyle ?? "minimal",
       flushEvery: options.flushEvery ?? 1000,
       append: options.append ?? false,
+      escapeFormulae: options.escapeFormulae ?? false,
     };
 
     // Clear file if not appending
@@ -139,6 +147,9 @@ export class CSVWriter {
     this.closed = true;
   }
 
+  /** Default pattern matching formula prefixes for CSV injection */
+  private static readonly FORMULA_PATTERN = /^[=+\-@\t\r]/;
+
   /**
    * Format a field value, quoting if necessary.
    */
@@ -147,7 +158,18 @@ export class CSVWriter {
       return "";
     }
 
-    const str = String(value);
+    let str = String(value);
+
+    // Apply formula escaping
+    if (this.options.escapeFormulae && str.length > 0) {
+      const pattern = this.options.escapeFormulae instanceof RegExp
+        ? this.options.escapeFormulae
+        : CSVWriter.FORMULA_PATTERN;
+
+      if (pattern.test(str)) {
+        str = "'" + str;
+      }
+    }
 
     const needsQuote =
       this.options.quoteStyle === "all" ||

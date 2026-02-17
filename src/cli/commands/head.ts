@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { formatOutput, printSummary } from "../index";
+import { formatOutput, printSummary, type ParserFlags } from "../index";
 
 interface HeadOptions {
   delimiter?: string;
@@ -12,6 +12,7 @@ interface HeadOptions {
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
   n: number;
+  parserOpts?: ParserFlags;
 }
 
 export async function head(
@@ -23,6 +24,7 @@ export async function head(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   const rows: Record<string, string | null>[] = [];

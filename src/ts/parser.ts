@@ -5,11 +5,11 @@
 import { loadNativeLibrary, toCString, isNativeAvailable, CacheLimitStatus, Encoding } from "./ffi";
 import { toArrayBuffer, type Pointer } from "bun:ffi";
 import { readFileSync } from "fs";
-import { CSVRow } from "./row";
+import { CSVRow, type CastFunction } from "./row";
 import { DataFrame } from "./dataframe";
 import { CSVWriter, ModificationLog } from "./writer";
 import type { Schema, CSVStats, CacheOptions } from "./types";
-import type { CSVError, CSVErrorCallback } from "./errors";
+import { createCSVError, type CSVError, type CSVErrorCallback } from "./errors";
 
 export { CacheLimitStatus, Encoding };
 
@@ -67,8 +67,8 @@ export interface CSVParserOptions<T = Record<string, string>> {
   escapeChar?: string;
   /** Whether first row is header (default: true) */
   hasHeader?: boolean;
-  /** Skip empty rows (default: true) */
-  skipEmptyRows?: boolean;
+  /** Skip empty rows. Set to "greedy" to also skip lines with only whitespace. (default: true) */
+  skipEmptyRows?: boolean | "greedy";
   /** Skip lines starting with this character (default: false/disabled). Set to true for '#', or a string for custom. */
   comments?: boolean | string;
   /** Maximum number of data rows to parse (default: 0 = unlimited). Header row is not counted. */
@@ -104,6 +104,116 @@ export interface CSVParserOptions<T = Record<string, string>> {
   chunkSize?: number;
   /** Explicitly treat string source as a URL to download (default: auto-detect http/https) */
   download?: boolean;
+  /**
+   * Custom HTTP headers to send when downloading a CSV from a URL.
+   * Only applies when source is a URL (http/https or download: true).
+   * @example { Authorization: "Bearer token123" }
+   */
+  downloadRequestHeaders?: Record<string, string>;
+  /**
+   * Include credentials (cookies) when fetching a remote CSV URL.
+   * Maps to fetch() credentials option: true = "include", false = "same-origin".
+   * (default: false)
+   */
+  withCredentials?: boolean;
+  /**
+   * Skip rows that cause parsing errors instead of collecting them.
+   * When true, malformed rows are silently dropped (errors still recorded).
+   * (default: false)
+   */
+  skipRecordsWithError?: boolean;
+  /**
+   * Skip records where all field values are empty.
+   * (default: false)
+   */
+  skipRecordsWithEmptyValues?: boolean;
+  /**
+   * Maximum allowed size for a single record in bytes.
+   * Records exceeding this size trigger a MaxRecordSize error.
+   * 0 = unlimited (default: 0)
+   */
+  maxRecordSize?: number;
+  /**
+   * Allow rows with inconsistent column counts (both more and fewer).
+   * Suppresses TooFewFields and TooManyFields errors.
+   * (default: false)
+   */
+  relaxColumnCount?: boolean;
+  /**
+   * Allow rows with fewer columns than the header.
+   * Suppresses TooFewFields errors. Missing fields return null.
+   * (default: false)
+   */
+  relaxColumnCountLess?: boolean;
+  /**
+   * Allow rows with more columns than the header.
+   * Suppresses TooManyFields errors. Extra fields go to __parsed_extra.
+   * (default: false)
+   */
+  relaxColumnCountMore?: boolean;
+  /**
+   * Trim whitespace from the left side of each field value.
+   * (default: false)
+   */
+  ltrim?: boolean;
+  /**
+   * Trim whitespace from the right side of each field value.
+   * (default: false)
+   */
+  rtrim?: boolean;
+  /**
+   * Trim whitespace from both sides of each field value.
+   * Equivalent to setting both ltrim and rtrim to true.
+   * (default: false)
+   */
+  trim?: boolean;
+  /**
+   * Start emitting data rows from this 1-based line number (inclusive).
+   * Line 1 is the first line in the file (header if present).
+   * (default: 1)
+   */
+  fromLine?: number;
+  /**
+   * Stop emitting data rows after this 1-based line number (inclusive).
+   * Line 1 is the first line in the file (header if present).
+   * 0 = unlimited (default: 0)
+   */
+  toLine?: number;
+  /**
+   * Fast mode: skip quote detection and use simple delimiter splitting.
+   * Only use when you know the data contains no quoted fields.
+   * Significantly faster for clean, simple CSV data.
+   * (default: false)
+   */
+  fastMode?: boolean;
+  /**
+   * Custom cast function applied to each field value.
+   * - Function form: `(value: string, context: CastContext) => any`
+   * - Record form: `{ columnName: (value: string) => any }`
+   * Applied after trimming and transform, during toObject()/toArray().
+   */
+  cast?: CastFunction | Record<string, (value: string) => unknown>;
+  /**
+   * How to handle duplicate column names in the header row.
+   * - `"rename"`: Append suffix (_1, _2, ...) to duplicates (default)
+   * - `"error"`: Throw an error when duplicates are found
+   * (default: "rename")
+   */
+  duplicateHeaders?: "rename" | "error";
+  /**
+   * Callback invoked once before the first chunk of data is parsed.
+   * Receives the raw CSV string (first chunk for streams, full content for files).
+   * Return a modified string to alter the data before parsing, or void to keep as-is.
+   * Only works with buffer-based and fast mode parsing.
+   */
+  beforeFirstChunk?: (chunk: string) => string | void;
+  /**
+   * Callback invoked for each parsed record (row).
+   * Receives the record as a string array and the row context.
+   * Return a modified array to alter the record, null/undefined to skip the record,
+   * or the original array to keep as-is.
+   */
+  onRecord?: (record: (string | null)[], context: { index: number; columns: string[] | null }) => (string | null)[] | null | undefined | void;
 }
 
 /** Parse metadata (PapaParse-compatible) */
@@ -159,6 +269,7 @@ export class CSVParser<T = Record<string, string>>
   // Error tracking
   private _errors: CSVError[] = [];
   private dataRowIndex: number = 0;
+  private beforeFirstChunkCalled: boolean = false;
 
   // Step/chunk callback state
   private aborted: boolean = false;
@@ -192,6 +303,17 @@ export class CSVParser<T = Record<string, string>>
       this.options.delimiter = this.autoDetectDelimiter(source);
     }
 
+    // Fast mode: skip native init, just record the file path
+    if (this.options.fastMode) {
+      if (typeof source === "string" && !source.startsWith("http")) {
+        this.sourcePath = source;
+        this.loaded = true;
+      } else {
+        throw new Error("Fast mode requires a file path source");
+      }
+      return;
+    }
+
     // Determine input type and initialize
     const isUrl = typeof source === "string" &&
       (source.startsWith("http://") || source.startsWith("https://") || options.download === true);
@@ -218,6 +340,19 @@ export class CSVParser<T = Record<string, string>>
   private initFromFile(path: string): void {
     if (!isNativeAvailable()) {
       throw new Error("Native library not available. Build with: bun run build:zig");
+    }
+
+    // beforeFirstChunk callback: read file, call callback, re-init from buffer if modified
+    if (this.options.beforeFirstChunk && !this.beforeFirstChunkCalled) {
+      this.beforeFirstChunkCalled = true;
+      const content = readFileSync(path, "utf-8");
+      const modified = this.options.beforeFirstChunk(content);
+      if (typeof modified === "string") {
+        // Content was modified — use buffer init instead of file init
+        const data = new TextEncoder().encode(modified);
+        this.initFromBuffer(data);
+        return;
+      }
     }
 
     const lib = loadNativeLibrary();
@@ -255,6 +390,16 @@ export class CSVParser<T = Record<string, string>>
   private initFromBuffer(data: Uint8Array): void {
     if (!isNativeAvailable()) {
       throw new Error("Native library not available. Build with: bun run build:zig");
+    }
+
+    // beforeFirstChunk callback for buffer input
+    if (this.options.beforeFirstChunk && !this.beforeFirstChunkCalled) {
+      this.beforeFirstChunkCalled = true;
+      const content = new TextDecoder().decode(data);
+      const modified = this.options.beforeFirstChunk(content);
+      if (typeof modified === "string") {
+        data = new TextEncoder().encode(modified);
+      }
     }
 
     const lib = loadNativeLibrary();
@@ -299,7 +444,14 @@ export class CSVParser<T = Record<string, string>>
 
     if (typeof source === "string") {
       // URL source: fetch and buffer
-      const response = await fetch(source);
+      const fetchInit: RequestInit = {};
+      if (this.options.downloadRequestHeaders) {
+        fetchInit.headers = this.options.downloadRequestHeaders;
+      }
+      if (this.options.withCredentials) {
+        fetchInit.credentials = "include";
+      }
+      const response = await fetch(source, fetchInit);
       if (!response.ok) {
         throw new Error(
           `Failed to fetch CSV from ${source}: ${response.status} ${response.statusText}`
@@ -348,18 +500,44 @@ export class CSVParser<T = Record<string, string>>
     }
 
     const fieldCount = lib.csv_get_field_count(this.handle);
-    this.headers = new Map();
-    this.headerRow = [];
-
     const row = new CSVRow<Record<string, string>>(this.handle, fieldCount);
 
+    const rawHeaders: string[] = [];
     for (let i = 0; i < fieldCount; i++) {
       let value = row.get(i) ?? `col${i}`;
       if (this.options.transformHeader) {
         value = this.options.transformHeader(value, i);
       }
-      this.headers.set(value, i);
-      this.headerRow.push(value);
+      rawHeaders.push(value);
+    }
+
+    this.applyHeaders(rawHeaders);
+  }
+
+  /**
+   * Apply header names with duplicate detection/handling.
+   */
+  private applyHeaders(rawHeaders: string[]): void {
+    this.headers = new Map();
+    this.headerRow = [];
+
+    const seen = new Map<string, number>();
+
+    for (let i = 0; i < rawHeaders.length; i++) {
+      let name = rawHeaders[i]!;
+      const count = seen.get(name) ?? 0;
+
+      if (count > 0) {
+        if (this.options.duplicateHeaders === "error") {
+          throw new Error(`Duplicate header "${name}" found at column ${i}`);
+        }
+        // Default: rename with suffix
+        name = `${name}_${count}`;
+      }
+
+      seen.set(rawHeaders[i]!, count + 1);
+      this.headers.set(name, i);
+      this.headerRow.push(name);
     }
   }
 
@@ -727,7 +905,7 @@ export class CSVParser<T = Record<string, string>>
       quoteChar: (this.options.quoteChar ?? '"').charCodeAt(0),
       escapeChar: (this.options.escapeChar ?? this.options.quoteChar ?? '"').charCodeAt(0),
       hasHeader: this.options.hasHeader ?? true,
-      skipEmptyRows: this.options.skipEmptyRows ?? true,
+      skipEmptyRows: !!this.options.skipEmptyRows,
       commentChar,
       preview: this.options.preview ?? 0,
       skipFirstNLines: this.options.skipFirstNLines ?? 0,
@@ -1053,9 +1231,225 @@ export class CSVParser<T = Record<string, string>>
   }
 
   /**
+   * Check field count mismatches and return whether the row should be skipped.
+   * Handles relaxColumnCount, relaxColumnCountLess, relaxColumnCountMore options.
+   */
+  private checkFieldMismatch(fieldCountNum: number, expectedFields: number): boolean {
+    if (expectedFields === 0 || fieldCountNum === expectedFields) {
+      return false; // No mismatch
+    }
+
+    const relaxAll = this.options.relaxColumnCount ?? false;
+
+    if (fieldCountNum > expectedFields) {
+      const relaxMore = relaxAll || (this.options.relaxColumnCountMore ?? false);
+      if (!relaxMore) {
+        this.recordError(createCSVError(
+          "FieldMismatch",
+          "TooManyFields",
+          `Expected ${expectedFields} fields but found ${fieldCountNum}`,
+          this.dataRowIndex,
+        ));
+        return this.options.skipRecordsWithError ?? false;
+      }
+    } else {
+      const relaxLess = relaxAll || (this.options.relaxColumnCountLess ?? false);
+      if (!relaxLess) {
+        this.recordError(createCSVError(
+          "FieldMismatch",
+          "TooFewFields",
+          `Expected ${expectedFields} fields but found ${fieldCountNum}`,
+          this.dataRowIndex,
+        ));
+        return this.options.skipRecordsWithError ?? false;
+      }
+    }
+
+    return false; // Relaxed, don't skip
+  }
+
+  /**
+   * Check if a row has all empty values.
+   * When greedy is true, whitespace-only fields count as empty.
+   */
+  private isRowEmpty(row: CSVRow<T>, fieldCount: number, greedy: boolean = false): boolean {
+    for (let i = 0; i < fieldCount; i++) {
+      const val = row.get(i);
+      if (val === null || val === "") continue;
+      if (greedy && val.trim() === "") continue;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Build trim configuration from parser options.
+   */
+  private getTrimConfig(): import("./row").TrimConfig | null {
+    const ltrim = this.options.trim || this.options.ltrim || false;
+    const rtrim = this.options.trim || this.options.rtrim || false;
+    if (!ltrim && !rtrim) return null;
+    return { ltrim, rtrim };
+  }
+
+  /**
+   * Fast mode iterator: reads file as string and splits by delimiter.
+   * Bypasses native parser and quote detection for maximum speed on clean data.
+   */
+  private *iterateFastMode(): Generator<CSVRow<T>> {
+    if (!this.sourcePath) {
+      throw new Error("Fast mode requires a file path source");
+    }
+
+    let content = readFileSync(this.sourcePath, "utf-8");
+
+    // beforeFirstChunk callback
+    if (this.options.beforeFirstChunk) {
+      const modified = this.options.beforeFirstChunk(content);
+      if (typeof modified === "string") {
+        content = modified;
+      }
+    }
+
+    const delimiter = this.options.delimiter ?? ",";
+    const skipEmptyRows = !!this.options.skipEmptyRows;
+    const greedyEmpty = this.options.skipEmptyRows === "greedy";
+    const skipEmptyValues = this.options.skipRecordsWithEmptyValues ?? false;
+    const maxRecordSize = this.options.maxRecordSize ?? 0;
+    const trimConfig = this.getTrimConfig();
+
+    const fromLine = this.options.fromLine ?? 0;
+    const toLine = this.options.toLine ?? 0;
+    const headerOffset = this.options.hasHeader ? 1 : 0;
+    const fromRecord = fromLine > 0 ? Math.max(0, fromLine - headerOffset - 1) : 0;
+    const toRecord = toLine > 0 ? toLine - headerOffset - 1 : Infinity;
+
+    // Split into lines, handling both \r\n and \n
+    const lines = content.split(/\r?\n/);
+
+    let startLine = 0;
+
+    // Skip comment lines / first N lines
+    const skipFirst = this.options.skipFirstNLines ?? 0;
+    startLine += skipFirst;
+
+    // Parse header
+    if (this.options.hasHeader && startLine < lines.length) {
+      const headerLine = lines[startLine]!;
+      const headerFields = headerLine.split(delimiter);
+      const rawHeaders: string[] = [];
+
+      for (let i = 0; i < headerFields.length; i++) {
+        let value = headerFields[i]!;
+        if (this.options.transformHeader) {
+          value = this.options.transformHeader(value, i);
+        }
+        rawHeaders.push(value);
+      }
+      this.applyHeaders(rawHeaders);
+      startLine++;
+    }
+
+    const expectedFields = this.headerRow ? this.headerRow.length : 0;
+    const commentChar = this.options.comments === true ? "#"
+      : typeof this.options.comments === "string" ? this.options.comments
+      : null;
+
+    for (let lineIdx = startLine; lineIdx < lines.length; lineIdx++) {
+      const line = lines[lineIdx]!;
+
+      // Skip empty lines
+      if (line.length === 0 && skipEmptyRows) continue;
+      if (greedyEmpty && line.trim().length === 0) continue;
+
+      // Skip comment lines
+      if (commentChar && line.startsWith(commentChar)) continue;
+
+      const fields = line.split(delimiter);
+
+      // maxRecordSize check
+      if (maxRecordSize > 0 && line.length > maxRecordSize) {
+        this.recordError(createCSVError(
+          "RecordSize",
+          "MaxRecordSize",
+          `Record at row ${this.dataRowIndex} exceeds maximum size of ${maxRecordSize} bytes (got ${line.length})`,
+          this.dataRowIndex,
+        ));
+        if (this.options.skipRecordsWithError) {
+          this.dataRowIndex++;
+          continue;
+        }
+      }
+
+      // Field count mismatch
+      const shouldSkip = this.checkFieldMismatch(fields.length, expectedFields);
+      if (shouldSkip) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      // Range processing
+      if (this.dataRowIndex < fromRecord) {
+        this.dataRowIndex++;
+        continue;
+      }
+      if (this.dataRowIndex > toRecord) {
+        break;
+      }
+
+      // onRecord callback: allow modification or skipping
+      let finalFields: (string | null)[] = fields;
+      if (this.options.onRecord) {
+        const result = this.options.onRecord(fields, {
+          index: this.dataRowIndex,
+          columns: this.headerRow,
+        });
+        if (result === null || result === undefined) {
+          // Skip this record
+          this.dataRowIndex++;
+          continue;
+        }
+        finalFields = result;
+      }
+
+      // Create a lightweight CSVRow from pre-split fields
+      const row = CSVRow.fromFields<T>(
+        finalFields as string[],
+        this.headers,
+        this.options.schema ?? null,
+        this.options.dynamicTyping ?? false,
+        this.options.transform ?? null,
+        trimConfig,
+        this.dataRowIndex,
+        this.options.cast ?? null,
+      );
+
+      // Skip records with all empty values
+      if (skipEmptyValues && this.isRowEmpty(row, finalFields.length, greedyEmpty)) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      this.dataRowIndex++;
+      yield row;
+
+      // preview limit
+      if (this.options.preview && this.dataRowIndex >= this.options.preview) {
+        break;
+      }
+    }
+  }
+
+  /**
    * Synchronous iterator for for-of loops.
    */
   *[Symbol.iterator](): Iterator<CSVRow<T>> {
+    // Fast mode: use TS-only string splitting
+    if (this.options.fastMode) {
+      yield* this.iterateFastMode();
+      return;
+    }
+
     if (this.needsAsyncInit && !this.loaded) {
       throw new Error(
         "Parser requires async loading for URL or ReadableStream sources. " +
@@ -1068,40 +1462,132 @@ export class CSVParser<T = Record<string, string>>
 
     const lib = loadNativeLibrary();
     const expectedFields = this.headerRow ? this.headerRow.length : 0;
+    const maxRecordSize = this.options.maxRecordSize ?? 0;
+    const skipEmptyValues = this.options.skipRecordsWithEmptyValues ?? false;
+    const greedyEmpty = this.options.skipEmptyRows === "greedy";
+    const trimConfig = this.getTrimConfig();
+
+    // Range processing: fromLine is 1-based file line (header=line 1)
+    // dataRowIndex is 0-based data rows (post-header)
+    // headerLine = line 1 (if hasHeader), so data line N = fromLine - (hasHeader ? 1 : 0) - 1
+    const fromLine = this.options.fromLine ?? 0;
+    const toLine = this.options.toLine ?? 0;
+    const headerOffset = this.options.hasHeader ? 1 : 0;
+    // fromRecord: 0-based data row to start emitting
+    const fromRecord = fromLine > 0 ? Math.max(0, fromLine - headerOffset - 1) : 0;
+    // toRecord: 0-based data row to stop after (inclusive)
+    const toRecord = toLine > 0 ? toLine - headerOffset - 1 : Infinity;
 
     while (lib.csv_next_row(this.handle)) {
       const fieldCount = lib.csv_get_field_count(this.handle);
       const fieldCountNum = Number(fieldCount);
 
-      // Detect field count mismatches when headers are present
-      if (expectedFields > 0 && fieldCountNum !== expectedFields) {
-        if (fieldCountNum > expectedFields) {
-          this.recordError({
-            type: "FieldMismatch",
-            code: "TooManyFields",
-            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
-            row: this.dataRowIndex,
-          });
-        } else {
-          this.recordError({
-            type: "FieldMismatch",
-            code: "TooFewFields",
-            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
-            row: this.dataRowIndex,
-          });
+      // Check maxRecordSize by summing field lengths
+      if (maxRecordSize > 0) {
+        let rowBytes = 0;
+        for (let i = 0; i < fieldCountNum; i++) {
+          rowBytes += Number(lib.csv_get_field_len(this.handle, i));
+        }
+        if (rowBytes > maxRecordSize) {
+          this.recordError(createCSVError(
+            "RecordSize",
+            "MaxRecordSize",
+            `Record at row ${this.dataRowIndex} exceeds maximum size of ${maxRecordSize} bytes (got ${rowBytes})`,
+            this.dataRowIndex,
+          ));
+          if (this.options.skipRecordsWithError) {
+            this.dataRowIndex++;
+            continue;
+          }
         }
       }
 
-      this.dataRowIndex++;
+      // Detect field count mismatches
+      const shouldSkip = this.checkFieldMismatch(fieldCountNum, expectedFields);
+      if (shouldSkip) {
+        this.dataRowIndex++;
+        continue;
+      }
 
-      yield new CSVRow<T>(
+      // Range: skip rows before fromRecord
+      if (this.dataRowIndex < fromRecord) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      // Range: stop after toRecord
+      if (this.dataRowIndex > toRecord) {
+        break;
+      }
+
+      // onRecord callback: extract fields, allow modification or skipping
+      if (this.options.onRecord) {
+        const rawRow = new CSVRow<T>(this.handle, fieldCount, this.headers, this.options.schema ?? null);
+        const fields: (string | null)[] = [];
+        for (let i = 0; i < fieldCountNum; i++) {
+          fields.push(rawRow.get(i));
+        }
+        const result = this.options.onRecord(fields, {
+          index: this.dataRowIndex,
+          columns: this.headerRow,
+        });
+        if (result === null || result === undefined) {
+          this.dataRowIndex++;
+          continue;
+        }
+        // Use modified fields via fromFields
+        const row = CSVRow.fromFields<T>(
+          result as string[],
+          this.headers,
+          this.options.schema ?? null,
+          this.options.dynamicTyping ?? false,
+          this.options.transform ?? null,
+          trimConfig,
+          this.dataRowIndex,
+          this.options.cast ?? null,
+        );
+
+        if (skipEmptyValues && this.isRowEmpty(row, result.length, greedyEmpty)) {
+          this.dataRowIndex++;
+          continue;
+        }
+        if (greedyEmpty && !skipEmptyValues && this.isRowEmpty(row, result.length, true)) {
+          this.dataRowIndex++;
+          continue;
+        }
+
+        this.dataRowIndex++;
+        yield row;
+        continue;
+      }
+
+      const row = new CSVRow<T>(
         this.handle,
         fieldCount,
         this.headers,
         this.options.schema ?? null,
         this.options.dynamicTyping ?? false,
         this.options.transform ?? null,
+        trimConfig,
+        this.dataRowIndex,
+        this.options.cast ?? null,
       );
+
+      // Skip records with all empty values (greedy checks after trim)
+      if (skipEmptyValues && this.isRowEmpty(row, fieldCountNum, greedyEmpty)) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      // Greedy skipEmptyRows (without skipRecordsWithEmptyValues):
+      // skip rows that become empty after trimming
+      if (greedyEmpty && !skipEmptyValues && this.isRowEmpty(row, fieldCountNum, true)) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      this.dataRowIndex++;
+      yield row;
     }
   }
 
@@ -1120,41 +1606,130 @@ export class CSVParser<T = Record<string, string>>
 
     const lib = loadNativeLibrary();
     const expectedFields = this.headerRow ? this.headerRow.length : 0;
+    const maxRecordSize = this.options.maxRecordSize ?? 0;
+    const skipEmptyValues = this.options.skipRecordsWithEmptyValues ?? false;
+    const greedyEmpty = this.options.skipEmptyRows === "greedy";
+    const trimConfig = this.getTrimConfig();
     let rowCount = 0;
+
+    const fromLine = this.options.fromLine ?? 0;
+    const toLine = this.options.toLine ?? 0;
+    const headerOffset = this.options.hasHeader ? 1 : 0;
+    const fromRecord = fromLine > 0 ? Math.max(0, fromLine - headerOffset - 1) : 0;
+    const toRecord = toLine > 0 ? toLine - headerOffset - 1 : Infinity;
 
     while (lib.csv_next_row(this.handle)) {
       const fieldCount = lib.csv_get_field_count(this.handle);
       const fieldCountNum = Number(fieldCount);
 
-      // Detect field count mismatches when headers are present
-      if (expectedFields > 0 && fieldCountNum !== expectedFields) {
-        if (fieldCountNum > expectedFields) {
-          this.recordError({
-            type: "FieldMismatch",
-            code: "TooManyFields",
-            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
-            row: this.dataRowIndex,
-          });
-        } else {
-          this.recordError({
-            type: "FieldMismatch",
-            code: "TooFewFields",
-            message: `Expected ${expectedFields} fields but found ${fieldCountNum}`,
-            row: this.dataRowIndex,
-          });
+      // Check maxRecordSize by summing field lengths
+      if (maxRecordSize > 0) {
+        let rowBytes = 0;
+        for (let i = 0; i < fieldCountNum; i++) {
+          rowBytes += Number(lib.csv_get_field_len(this.handle, i));
+        }
+        if (rowBytes > maxRecordSize) {
+          this.recordError(createCSVError(
+            "RecordSize",
+            "MaxRecordSize",
+            `Record at row ${this.dataRowIndex} exceeds maximum size of ${maxRecordSize} bytes (got ${rowBytes})`,
+            this.dataRowIndex,
+          ));
+          if (this.options.skipRecordsWithError) {
+            this.dataRowIndex++;
+            continue;
+          }
         }
       }
 
-      this.dataRowIndex++;
+      // Detect field count mismatches
+      const shouldSkip = this.checkFieldMismatch(fieldCountNum, expectedFields);
+      if (shouldSkip) {
+        this.dataRowIndex++;
+        continue;
+      }
 
-      yield new CSVRow<T>(
+      // Range: skip rows before fromRecord
+      if (this.dataRowIndex < fromRecord) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      // Range: stop after toRecord
+      if (this.dataRowIndex > toRecord) {
+        break;
+      }
+
+      // onRecord callback: extract fields, allow modification or skipping
+      if (this.options.onRecord) {
+        const rawRow = new CSVRow<T>(this.handle, fieldCount, this.headers, this.options.schema ?? null);
+        const fields: (string | null)[] = [];
+        for (let i = 0; i < fieldCountNum; i++) {
+          fields.push(rawRow.get(i));
+        }
+        const result = this.options.onRecord(fields, {
+          index: this.dataRowIndex,
+          columns: this.headerRow,
+        });
+        if (result === null || result === undefined) {
+          this.dataRowIndex++;
+          continue;
+        }
+        const row = CSVRow.fromFields<T>(
+          result as string[],
+          this.headers,
+          this.options.schema ?? null,
+          this.options.dynamicTyping ?? false,
+          this.options.transform ?? null,
+          trimConfig,
+          this.dataRowIndex,
+          this.options.cast ?? null,
+        );
+
+        if (skipEmptyValues && this.isRowEmpty(row, result.length, greedyEmpty)) {
+          this.dataRowIndex++;
+          continue;
+        }
+        if (greedyEmpty && !skipEmptyValues && this.isRowEmpty(row, result.length, true)) {
+          this.dataRowIndex++;
+          continue;
+        }
+
+        this.dataRowIndex++;
+        yield row;
+
+        rowCount++;
+        if (rowCount % 1000 === 0) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        continue;
+      }
+
+      const row = new CSVRow<T>(
         this.handle,
         fieldCount,
         this.headers,
         this.options.schema ?? null,
         this.options.dynamicTyping ?? false,
         this.options.transform ?? null,
+        trimConfig,
+        this.dataRowIndex,
+        this.options.cast ?? null,
       );
+
+      // Skip records with all empty values (greedy checks after trim)
+      if (skipEmptyValues && this.isRowEmpty(row, fieldCountNum, greedyEmpty)) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      if (greedyEmpty && !skipEmptyValues && this.isRowEmpty(row, fieldCountNum, true)) {
+        this.dataRowIndex++;
+        continue;
+      }
+
+      this.dataRowIndex++;
+      yield row;
 
       // Yield to event loop periodically
       rowCount++;

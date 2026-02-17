@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { printSummary } from "../index";
+import { printSummary, type ParserFlags } from "../index";
 
 interface ConvertOptions {
   delimiter?: string;
@@ -13,6 +13,7 @@ interface ConvertOptions {
   fileSize?: number;
   to: string;
   output?: string;
+  parserOpts?: ParserFlags;
 }
 
 export async function convert(
@@ -24,6 +25,7 @@ export async function convert(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   const targetFormat = options.to.toLowerCase();

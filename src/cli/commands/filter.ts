@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { formatOutput } from "../index";
+import { formatOutput, type ParserFlags } from "../index";
 
 interface FilterOptions {
   delimiter?: string;
@@ -12,6 +12,7 @@ interface FilterOptions {
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
   expression: string;
+  parserOpts?: ParserFlags;
 }
 
 type RowRecord = Record<string, string | null>;
@@ -25,8 +26,8 @@ type FilterFn = (row: RowRecord) => boolean;
 function createFilter(expression: string): FilterFn {
   const trimmed = expression.trim();
 
-  // == comparison
-  let match = trimmed.match(/^(\w+)\s*==\s*["']?([^"']+)["']?$/);
+  // == or = comparison
+  let match = trimmed.match(/^(\w+)\s*={1,2}\s*["']?([^"']+?)["']?\s*$/);
   if (match && match[1] && match[2]) {
     const col = match[1];
     const val = match[2];
@@ -34,7 +35,7 @@ function createFilter(expression: string): FilterFn {
   }
 
   // != comparison
-  match = trimmed.match(/^(\w+)\s*!=\s*["']?([^"']+)["']?$/);
+  match = trimmed.match(/^(\w+)\s*!=\s*["']?([^"']+?)["']?\s*$/);
   if (match && match[1] && match[2]) {
     const col = match[1];
     const val = match[2];
@@ -130,6 +131,7 @@ export async function filter(
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
   const filterFn = createFilter(options.expression);

@@ -3,7 +3,7 @@
  */
 
 import { CSVParser } from "../../ts/parser";
-import { printSummary } from "../index";
+import { printSummary, type ParserFlags } from "../index";
 
 interface ValidateOptions {
   delimiter?: string;
@@ -11,24 +11,7 @@ interface ValidateOptions {
   hasHeader: boolean;
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
-}
-
-interface ValidationResult {
-  valid: boolean;
-  rowCount: number;
-  columnCount: number;
-  errors: ValidationError[];
-  warnings: ValidationWarning[];
-}
-
-interface ValidationError {
-  line: number;
-  message: string;
-}
-
-interface ValidationWarning {
-  line: number;
-  message: string;
+  parserOpts?: ParserFlags;
 }
 
 export async function validate(
@@ -37,75 +20,48 @@ export async function validate(
 ): Promise<void> {
   const startTime = performance.now();
 
+  // Validate uses the parser's own error collection
   const parser = new CSVParser(filePath, {
     delimiter: options.delimiter,
     hasHeader: options.hasHeader,
+    ...options.parserOpts,
   });
 
-  const result: ValidationResult = {
-    valid: true,
-    rowCount: 0,
-    columnCount: 0,
-    errors: [],
-    warnings: [],
-  };
+  const headers = parser.getHeaders();
+  const columnCount = headers ? headers.length : 0;
+  let rowCount = 0;
 
-  let expectedColumns: number | null = null;
-  let lineNumber = options.hasHeader ? 2 : 1;
-
-  for (const row of parser) {
-    const fieldCount = row.length;
-
-    // Set expected columns from first row
-    if (expectedColumns === null) {
-      expectedColumns = fieldCount;
-      result.columnCount = fieldCount;
-    }
-
-    // Check column count consistency
-    if (fieldCount !== expectedColumns) {
-      result.warnings.push({
-        line: lineNumber,
-        message: `Expected ${expectedColumns} columns, found ${fieldCount}`,
-      });
-    }
-
-    result.rowCount++;
-    lineNumber++;
+  for (const _row of parser) {
+    rowCount++;
   }
 
+  const parserErrors = parser.errors;
   parser.close();
 
   // Output results
-  if (result.errors.length === 0 && result.warnings.length === 0) {
+  if (parserErrors.length === 0) {
     console.log("✓ CSV is valid");
   } else {
-    if (result.errors.length > 0) {
-      console.log("✗ CSV has errors:");
-      for (const error of result.errors) {
-        console.log(`  Line ${error.line}: ${error.message}`);
-      }
-      result.valid = false;
+    console.log(`✗ CSV has ${parserErrors.length} issue(s):`);
+    for (const error of parserErrors.slice(0, 10)) {
+      console.log(`  Row ${error.row}: [${error.type}/${error.code}] ${error.message}`);
     }
-
-    if (result.warnings.length > 0) {
-      console.log("⚠ Warnings:");
-      for (const warning of result.warnings.slice(0, 10)) {
-        console.log(`  Line ${warning.line}: ${warning.message}`);
-      }
-      if (result.warnings.length > 10) {
-        console.log(`  ... and ${result.warnings.length - 10} more`);
-      }
+    if (parserErrors.length > 10) {
+      console.log(`  ... and ${parserErrors.length - 10} more`);
     }
   }
 
-  console.log(`\nRows: ${result.rowCount.toLocaleString()}`);
-  console.log(`Columns: ${result.columnCount}`);
+  console.log(`\nRows: ${rowCount.toLocaleString()}`);
+  console.log(`Columns: ${columnCount}`);
+
+  if (headers) {
+    console.log(`Headers: ${headers.join(", ")}`);
+  }
 
   // Print summary to stderr
-  printSummary(result.rowCount, startTime, options.fileSize);
+  printSummary(rowCount, startTime, options.fileSize);
 
-  if (!result.valid) {
+  if (parserErrors.length > 0) {
     process.exit(1);
   }
 }

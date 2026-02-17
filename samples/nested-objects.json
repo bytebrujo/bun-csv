@@ -1,0 +1,5 @@
+[
+  { "user": { "name": "Alice", "age": 30 }, "address": { "city": "NYC", "zip": "10001" }, "score": 95 },
+  { "user": { "name": "Bob", "age": 25 }, "address": { "city": "LA", "zip": "90001" }, "score": 87 },
+  { "user": { "name": "Charlie", "age": 35 }, "address": { "city": "Chicago", "zip": "60601" }, "score": 92 }
+]

@@ -4,6 +4,7 @@
 
 import { CSVParser } from "../../ts/parser";
 import { statSync } from "fs";
+import type { ParserFlags } from "../index";
 
 interface BenchmarkOptions {
   delimiter?: string;
@@ -12,6 +13,7 @@ interface BenchmarkOptions {
   format: "auto" | "table" | "csv" | "json";
   fileSize?: number;
   iterations?: number;
+  parserOpts?: ParserFlags;
 }
 
 interface BenchmarkResult {
@@ -43,6 +45,7 @@ export async function benchmark(
     const parser = new CSVParser(filePath, {
       delimiter: options.delimiter,
       hasHeader: options.hasHeader,
+      ...options.parserOpts,
     });
     let count = 0;
     for (const row of parser) {
@@ -62,6 +65,7 @@ export async function benchmark(
     const parser = new CSVParser(filePath, {
       delimiter: options.delimiter,
       hasHeader: options.hasHeader,
+      ...options.parserOpts,
     });
 
     let rowCount = 0;
