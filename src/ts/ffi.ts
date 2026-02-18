@@ -125,6 +125,27 @@ const PLATFORM_NAMES: Record<string, string> = {
   win32: "windows",
 };
 
+/**
+ * Walk up from a starting directory to find the turbocsv package root
+ * (the directory containing package.json with name "turbocsv").
+ */
+function findPackageRoot(startDir: string): string | null {
+  let dir = startDir;
+  for (let i = 0; i < 10; i++) {
+    const pkgPath = join(dir, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(require("fs").readFileSync(pkgPath, "utf-8"));
+        if (pkg.name === "turbocsv") return dir;
+      } catch {}
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
 /** Find the native library path */
 function findLibraryPath(): string | null {
   const platform = process.platform;
@@ -147,22 +168,21 @@ function findLibraryPath(): string | null {
 
   const searchPaths: string[] = [];
 
-  for (const platformDir of platformDirs) {
-    // Installed: binaries in package root (from dist/)
-    searchPaths.push(join(import.meta.dir, "..", "binaries", platformDir, libName));
-    // Installed: binaries from cwd
-    searchPaths.push(join(process.cwd(), "binaries", platformDir, libName));
-    // Installed: binaries relative to file (two levels up from src/ts/)
-    searchPaths.push(join(dirname(import.meta.dir), "..", "..", "binaries", platformDir, libName));
+  // Find the package root by walking up from import.meta.dir
+  // This works regardless of whether we're in dist/, dist/cli/, or src/ts/
+  const pkgRoot = findPackageRoot(import.meta.dir);
+  if (pkgRoot) {
+    for (const platformDir of platformDirs) {
+      searchPaths.push(join(pkgRoot, "binaries", platformDir, libName));
+    }
+    searchPaths.push(join(pkgRoot, "zig-out", "lib", libName));
   }
 
-  // Development: zig-out in project root (from cwd)
+  // Also check cwd for development usage
+  for (const platformDir of platformDirs) {
+    searchPaths.push(join(process.cwd(), "binaries", platformDir, libName));
+  }
   searchPaths.push(join(process.cwd(), "zig-out", "lib", libName));
-  // Development: zig-out relative to this file (from dist/)
-  searchPaths.push(join(import.meta.dir, "..", "zig-out", "lib", libName));
-  // Development: zig-out relative to this file (from src/ts/)
-  searchPaths.push(join(dirname(import.meta.dir), "..", "..", "zig-out", "lib", libName));
-  searchPaths.push(join(dirname(import.meta.dir), "..", "zig-out", "lib", libName));
 
   for (const searchPath of searchPaths) {
     if (existsSync(searchPath)) {
