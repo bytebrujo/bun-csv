@@ -7,7 +7,7 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "turbocsv": "./dist/cli/index.js"
+    "turbocsv": "./dist/cli/runner.js"
   },
   "exports": {
     ".": {
@@ -32,7 +32,7 @@
     "build:zig:debug": "zig build",
     "build:wasm": "zig build -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding",
     "build:ts": "bun build ./src/ts/index.ts --outdir ./dist --target bun",
-    "build:cli": "bun build ./src/cli/index.ts --outdir ./dist/cli --target bun",
+    "build:cli": "bun build ./src/cli/index.ts --outdir ./dist/cli --target bun && cp src/cli/runner.js dist/cli/runner.js",
     "build": "bun run build:zig && bun run build:ts && bun run build:cli",
     "build:all": "bun run build && bun run build:wasm",
     "bundle-binaries": "bun scripts/bundle-binaries.ts",

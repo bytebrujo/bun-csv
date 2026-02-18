@@ -2,6 +2,7 @@
  * convert command - Convert between formats (CSV, TSV, JSON)
  */
 
+import { writeFile } from "fs/promises";
 import { CSVParser } from "../../ts/parser";
 import { printSummary, type ParserFlags } from "../index";
 
@@ -80,7 +81,7 @@ export async function convert(
 
   // Write to file or stdout
   if (options.output) {
-    await Bun.write(options.output, output);
+    await writeFile(options.output, output, "utf-8");
     console.error(`✓ Written to: ${options.output}`);
   } else {
     console.log(output);
