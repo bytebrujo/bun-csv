@@ -269,10 +269,10 @@ describe("onRecord", () => {
     parser.close();
 
     expect(records.length).toBe(4);
-    expect(records[0].fields).toEqual(["Alice", "30", "NYC"]);
-    expect(records[0].index).toBe(0);
-    expect(records[3].fields).toEqual(["Diana", "28", "Boston"]);
-    expect(records[3].index).toBe(3);
+    expect(records[0]!.fields).toEqual(["Alice", "30", "NYC"]);
+    expect(records[0]!.index).toBe(0);
+    expect(records[3]!.fields).toEqual(["Diana", "28", "Boston"]);
+    expect(records[3]!.index).toBe(3);
   });
 
   test("context includes column names", () => {
@@ -286,7 +286,7 @@ describe("onRecord", () => {
     for (const _row of parser) { break; }
     parser.close();
 
-    expect(columns).toEqual(["name", "age", "city"]);
+    expect(columns!).toEqual(["name", "age", "city"]);
   });
 
   test("returning null skips the record", () => {
@@ -328,7 +328,7 @@ describe("onRecord", () => {
     const parser = new CSVParser(join(TEST_DIR, "p4-callbacks.csv"), {
       onRecord: (record) => {
         // Uppercase all names
-        return [record[0]?.toUpperCase() ?? null, record[1], record[2]];
+        return [record[0]?.toUpperCase() ?? null, record[1] ?? null, record[2] ?? null];
       },
     });
     const rows: any[] = [];
@@ -348,7 +348,7 @@ describe("onRecord", () => {
       onRecord: (record) => {
         // Double the value
         const val = parseInt(record[1] ?? "0") * 2;
-        return [record[0], String(val)];
+        return [record[0] ?? null, String(val)];
       },
     });
     const rows: any[] = [];
@@ -367,7 +367,7 @@ describe("onRecord", () => {
       onRecord: (record) => {
         // Skip records from LA, uppercase names for the rest
         if (record[2] === "LA") return null;
-        return [record[0]?.toUpperCase() ?? null, record[1], record[2]];
+        return [record[0]?.toUpperCase() ?? null, record[1] ?? null, record[2] ?? null];
       },
     });
     const rows: any[] = [];
@@ -417,7 +417,7 @@ describe("Combined Phase 4 features", () => {
       },
       onRecord: (record) => {
         // Uppercase names
-        return [record[0]?.toUpperCase() ?? null, record[1]];
+        return [record[0]?.toUpperCase() ?? null, record[1] ?? null];
       },
     });
     const rows: any[] = [];
