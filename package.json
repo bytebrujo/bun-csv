@@ -1,6 +1,6 @@
 {
   "name": "turbocsv",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "High-performance CSV parser with SIMD acceleration, DataFrame operations, and CLI",
   "type": "module",
   "main": "./dist/index.js",
