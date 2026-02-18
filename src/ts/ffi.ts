@@ -118,10 +118,18 @@ export interface NativeLib {
 let nativeLib: NativeLib | null = null;
 let libraryPath: string | null = null;
 
+/** Map process.platform to the OS name used in release assets */
+const PLATFORM_NAMES: Record<string, string> = {
+  darwin: "macos",
+  linux: "linux",
+  win32: "windows",
+};
+
 /** Find the native library path */
 function findLibraryPath(): string | null {
   const platform = process.platform;
   const arch = process.arch;
+  const releasePlatform = PLATFORM_NAMES[platform] ?? platform;
 
   // Library name by platform
   const libName =
@@ -131,21 +139,30 @@ function findLibraryPath(): string | null {
         ? "turbocsv.dll"
         : "libturbocsv.so";
 
-  // Search paths - try multiple strategies
-  const searchPaths = [
-    // Development: zig-out in project root (from cwd)
-    join(process.cwd(), "zig-out", "lib", libName),
-    // Development: zig-out relative to this file's location
-    join(dirname(import.meta.dir), "..", "..", "zig-out", "lib", libName),
-    // Development: zig-out relative to src/ts
-    join(dirname(import.meta.dir), "..", "zig-out", "lib", libName),
-    // Installed: binaries directory from cwd
-    join(process.cwd(), "binaries", `${platform}-${arch}`, libName),
-    // Installed: binaries directory relative to file
-    join(dirname(import.meta.dir), "..", "..", "binaries", `${platform}-${arch}`, libName),
-    // Node modules location
-    join(dirname(import.meta.dir), "..", "binaries", `${platform}-${arch}`, libName),
+  // Both naming conventions: process.platform (darwin-arm64) and release names (macos-arm64)
+  const platformDirs = [
+    `${platform}-${arch}`,
+    `${releasePlatform}-${arch}`,
   ];
+
+  const searchPaths: string[] = [];
+
+  for (const platformDir of platformDirs) {
+    // Installed: binaries in package root (from dist/)
+    searchPaths.push(join(import.meta.dir, "..", "binaries", platformDir, libName));
+    // Installed: binaries from cwd
+    searchPaths.push(join(process.cwd(), "binaries", platformDir, libName));
+    // Installed: binaries relative to file (two levels up from src/ts/)
+    searchPaths.push(join(dirname(import.meta.dir), "..", "..", "binaries", platformDir, libName));
+  }
+
+  // Development: zig-out in project root (from cwd)
+  searchPaths.push(join(process.cwd(), "zig-out", "lib", libName));
+  // Development: zig-out relative to this file (from dist/)
+  searchPaths.push(join(import.meta.dir, "..", "zig-out", "lib", libName));
+  // Development: zig-out relative to this file (from src/ts/)
+  searchPaths.push(join(dirname(import.meta.dir), "..", "..", "zig-out", "lib", libName));
+  searchPaths.push(join(dirname(import.meta.dir), "..", "zig-out", "lib", libName));
 
   for (const searchPath of searchPaths) {
     if (existsSync(searchPath)) {

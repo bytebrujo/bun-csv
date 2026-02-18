@@ -74,10 +74,11 @@ async function downloadBinary(): Promise<boolean> {
     return false;
   }
 
+  // Use process.platform-style naming (darwin-arm64, linux-x64) to match ffi.ts search paths
   const binaryDir = join(
     process.cwd(),
     "binaries",
-    `${config.os}-${config.arch}`
+    `${process.platform}-${process.arch}`
   );
   const binaryPath = join(binaryDir, config.libName);
 
@@ -114,7 +115,7 @@ async function downloadBinary(): Promise<boolean> {
       writeFileSync(tempFile, new Uint8Array(buffer));
 
       const { execSync } = await import("child_process");
-      execSync(`tar -xzf "${tempFile}" -C "${binaryDir}"`, { stdio: "inherit" });
+      execSync(`tar -xzf "${tempFile}" --strip-components=2 -C "${binaryDir}"`, { stdio: "inherit" });
 
       // Remove temp file
       const { unlinkSync } = await import("fs");

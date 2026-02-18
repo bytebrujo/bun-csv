@@ -339,7 +339,12 @@ export class CSVParser<T = Record<string, string>>
    */
   private initFromFile(path: string): void {
     if (!isNativeAvailable()) {
-      throw new Error("Native library not available. Build with: bun run build:zig");
+      throw new Error(
+        "TurboCSV native library not found.\n" +
+        `  Platform: ${process.platform}-${process.arch}\n` +
+        "  To build from source: bun run build:zig\n" +
+        "  To reinstall: npm install turbocsv"
+      );
     }
 
     // beforeFirstChunk callback: read file, call callback, re-init from buffer if modified
@@ -389,7 +394,12 @@ export class CSVParser<T = Record<string, string>>
    */
   private initFromBuffer(data: Uint8Array): void {
     if (!isNativeAvailable()) {
-      throw new Error("Native library not available. Build with: bun run build:zig");
+      throw new Error(
+        "TurboCSV native library not found.\n" +
+        `  Platform: ${process.platform}-${process.arch}\n` +
+        "  To build from source: bun run build:zig\n" +
+        "  To reinstall: npm install turbocsv"
+      );
     }
 
     // beforeFirstChunk callback for buffer input

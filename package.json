@@ -25,8 +25,7 @@
   "files": [
     "dist",
     "wasm",
-    "binaries",
-    "scripts/postinstall.ts"
+    "binaries"
   ],
   "scripts": {
     "build:zig": "zig build -Doptimize=ReleaseFast",
@@ -36,7 +35,7 @@
     "build:cli": "bun build ./src/cli/index.ts --outdir ./dist/cli --target bun",
     "build": "bun run build:zig && bun run build:ts && bun run build:cli",
     "build:all": "bun run build && bun run build:wasm",
-    "postinstall": "bun scripts/postinstall.ts",
+    "bundle-binaries": "bun scripts/bundle-binaries.ts",
     "test": "bun test",
     "test:unit": "bun test test/unit",
     "test:integration": "bun test test/integration",
@@ -45,7 +44,7 @@
     "benchmark:compare": "bun run test/benchmark-comparison.ts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist zig-out zig-cache wasm/*.wasm binaries",
-    "prepublishOnly": "bun run build",
+    "prepublishOnly": "bun run build && bun run bundle-binaries",
     "landing:dev": "cd landing && bun run dev",
     "landing:build": "cd landing && bun run build"
   },
