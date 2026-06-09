@@ -1,0 +1,15 @@
+{
+  // Declaration-only build config. `bun build` emits JS but cannot generate
+  // .d.ts files, so tsc handles type declarations as a separate build step.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "declarationMap": false,
+    "rootDir": "./src/ts",
+    "outDir": "./dist"
+  },
+  "include": ["src/ts/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test"]
+}
