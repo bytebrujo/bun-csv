@@ -10,6 +10,9 @@
   margin-bottom: 1rem;
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 0.5rem;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .tab {
@@ -22,6 +25,7 @@
   cursor: pointer;
   border-radius: 4px;
   transition: all 0.2s ease;
+  flex: 0 0 auto;
 }
 
 .tab:hover {
@@ -38,6 +42,7 @@
   position: relative;
   min-height: 350px;
   margin-bottom: 1.5rem;
+  min-width: 0;
 }
 
 .code-block {
@@ -45,6 +50,7 @@
   top: 0;
   left: 0;
   right: 0;
+  min-width: 0;
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.2s ease;
@@ -66,6 +72,7 @@
   padding: 1.5rem;
   border-radius: 8px;
   overflow-x: auto;
+  max-width: 100%;
   font-size: 0.875rem;
   line-height: 1.6;
   background: #1d1f21 !important;

@@ -308,15 +308,13 @@ pub const SimdScanner = struct {
         field_starts: *std.ArrayList(usize),
         allocator: std.mem.Allocator,
     ) ?usize {
-        _ = allocator;
-
         const scan = self.scanRowFast(data, start);
         if (!scan.found_row and scan.field_count == 0) return null;
 
         // Convert field_ends to field_starts format
         var field_start = start;
         for (0..scan.field_count) |i| {
-            field_starts.append(field_start) catch return null;
+            field_starts.append(allocator, field_start) catch return null;
             field_start = scan.field_ends[i] + 1;
         }
 
@@ -335,8 +333,8 @@ pub const SimdScanner = struct {
         field_counts: []usize,
         bytes_consumed: usize,
     } {
-        var row_ends = std.ArrayList(usize).init(allocator);
-        var field_counts = std.ArrayList(usize).init(allocator);
+        var row_ends: std.ArrayList(usize) = .empty;
+        var field_counts: std.ArrayList(usize) = .empty;
 
         var pos = start;
         var rows_found: usize = 0;
@@ -345,23 +343,43 @@ pub const SimdScanner = struct {
             const scan = self.scanRowFast(data, pos);
 
             if (scan.found_row) {
-                row_ends.append(scan.row_end) catch break;
-                field_counts.append(scan.field_count) catch break;
+                row_ends.append(allocator, scan.row_end) catch break;
+                field_counts.append(allocator, scan.field_count) catch break;
                 pos = scan.row_end;
                 rows_found += 1;
             } else if (scan.field_count > 0) {
                 // Last row without newline
-                row_ends.append(scan.row_end) catch break;
-                field_counts.append(scan.field_count) catch break;
+                row_ends.append(allocator, scan.row_end) catch break;
+                field_counts.append(allocator, scan.field_count) catch break;
                 break;
             } else {
                 break;
             }
         }
 
+        const owned_row_ends = row_ends.toOwnedSlice(allocator) catch {
+            row_ends.deinit(allocator);
+            field_counts.deinit(allocator);
+            return .{
+                .row_ends = &.{},
+                .field_counts = &.{},
+                .bytes_consumed = pos - start,
+            };
+        };
+
+        const owned_field_counts = field_counts.toOwnedSlice(allocator) catch {
+            allocator.free(owned_row_ends);
+            field_counts.deinit(allocator);
+            return .{
+                .row_ends = &.{},
+                .field_counts = &.{},
+                .bytes_consumed = pos - start,
+            };
+        };
+
         return .{
-            .row_ends = row_ends.toOwnedSlice() catch &.{},
-            .field_counts = field_counts.toOwnedSlice() catch &.{},
+            .row_ends = owned_row_ends,
+            .field_counts = owned_field_counts,
             .bytes_consumed = pos - start,
         };
     }

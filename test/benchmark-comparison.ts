@@ -112,11 +112,28 @@ async function benchmarkTurboCSV(filePath: string): Promise<{ rows: number; time
   return { rows, timeMs };
 }
 
+// Benchmark TurboCSV fast mode (simple CSV, no quote handling)
+async function benchmarkTurboCSVFastMode(filePath: string): Promise<{ rows: number; timeMs: number }> {
+  const start = performance.now();
+  const parser = new CSVParser(filePath, { fastMode: true });
+  let rows = 0;
+
+  for (const row of parser) {
+    rows++;
+    // Access a field to ensure parsing
+    row.get(0);
+  }
+
+  parser.close();
+  const timeMs = performance.now() - start;
+
+  return { rows, timeMs };
+}
+
 // Benchmark PapaParse
 async function benchmarkPapaParse(filePath: string): Promise<{ rows: number; timeMs: number }> {
-  const content = readFileSync(filePath, "utf-8");
-
   const start = performance.now();
+  const content = readFileSync(filePath, "utf-8");
   const result = Papa.parse(content, {
     header: true,
     skipEmptyLines: true,
@@ -128,9 +145,8 @@ async function benchmarkPapaParse(filePath: string): Promise<{ rows: number; tim
 
 // Benchmark csv-parse (sync)
 async function benchmarkCsvParse(filePath: string): Promise<{ rows: number; timeMs: number }> {
-  const content = readFileSync(filePath, "utf-8");
-
   const start = performance.now();
+  const content = readFileSync(filePath, "utf-8");
   const records = csvParse(content, {
     columns: true,
     skip_empty_lines: true,
@@ -142,10 +158,9 @@ async function benchmarkCsvParse(filePath: string): Promise<{ rows: number; time
 
 // Benchmark fast-csv
 async function benchmarkFastCsv(filePath: string): Promise<{ rows: number; timeMs: number }> {
-  const content = readFileSync(filePath, "utf-8");
-
   return new Promise((resolve) => {
     const start = performance.now();
+    const content = readFileSync(filePath, "utf-8");
     let rows = 0;
 
     fastCsvParse(content, { headers: true })
@@ -173,6 +188,7 @@ async function benchmarkFile(filePath: string): Promise<BenchmarkResult[]> {
 
   const libraries = [
     { name: "TurboCSV", fn: benchmarkTurboCSV },
+    { name: "TurboCSV fast", fn: benchmarkTurboCSVFastMode },
     { name: "PapaParse", fn: benchmarkPapaParse },
     { name: "csv-parse", fn: benchmarkCsvParse },
     { name: "fast-csv", fn: benchmarkFastCsv },
@@ -278,32 +294,36 @@ async function main() {
   console.log("║                         Summary                                    ║");
   console.log("╚════════════════════════════════════════════════════════════════════╝");
 
-  // Calculate average speedup for TurboCSV vs others
-  const turboResults = allResults.filter(r => r.library === "TurboCSV");
+  // Calculate average speedup for TurboCSV variants vs others
+  const turboVariants = ["TurboCSV", "TurboCSV fast"];
   const otherLibraries = ["PapaParse", "csv-parse", "fast-csv"];
 
-  console.log("\nAverage speedup (TurboCSV vs others):");
-  console.log("─".repeat(40));
+  for (const variant of turboVariants) {
+    const turboResults = allResults.filter(r => r.library === variant);
 
-  for (const lib of otherLibraries) {
-    const libResults = allResults.filter(r => r.library === lib);
-    let totalSpeedup = 0;
-    let count = 0;
+    console.log(`\nAverage speedup (${variant} vs others):`);
+    console.log("─".repeat(40));
 
-    for (const turbo of turboResults) {
-      const other = libResults.find(r => r.file === turbo.file);
-      if (other) {
-        totalSpeedup += turbo.throughputMBs / other.throughputMBs;
-        count++;
+    for (const lib of otherLibraries) {
+      const libResults = allResults.filter(r => r.library === lib);
+      let totalSpeedup = 0;
+      let count = 0;
+
+      for (const turbo of turboResults) {
+        const other = libResults.find(r => r.file === turbo.file);
+        if (other) {
+          totalSpeedup += turbo.throughputMBs / other.throughputMBs;
+          count++;
+        }
       }
+
+      const avgSpeedup = count > 0 ? totalSpeedup / count : 0;
+      const speedupStr = avgSpeedup >= 1
+        ? `\x1b[32m${avgSpeedup.toFixed(2)}x faster\x1b[0m`
+        : `\x1b[31m${(1 / avgSpeedup).toFixed(2)}x slower\x1b[0m`;
+
+      console.log(`  vs ${lib.padEnd(12)}: ${speedupStr}`);
     }
-
-    const avgSpeedup = count > 0 ? totalSpeedup / count : 0;
-    const speedupStr = avgSpeedup >= 1
-      ? `\x1b[32m${avgSpeedup.toFixed(2)}x faster\x1b[0m`
-      : `\x1b[31m${(1/avgSpeedup).toFixed(2)}x slower\x1b[0m`;
-
-    console.log(`  vs ${lib.padEnd(12)}: ${speedupStr}`);
   }
 
   // Winner summary
@@ -321,7 +341,7 @@ async function main() {
   for (const [file, results] of fileGroups) {
     results.sort((a, b) => b.throughputMBs - a.throughputMBs);
     const winner = results[0];
-    const winnerColor = winner.library === "TurboCSV" ? "\x1b[32m" : "\x1b[33m";
+    const winnerColor = winner.library.startsWith("TurboCSV") ? "\x1b[32m" : "\x1b[33m";
     console.log(`  ${file.padEnd(25)}: ${winnerColor}${winner.library}\x1b[0m (${winner.throughputMBs.toFixed(1)} MB/s)`);
   }
 

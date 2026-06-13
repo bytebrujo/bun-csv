@@ -17,20 +17,21 @@ pub fn build(b: *std.Build) void {
 
     // Unit tests (native only)
     if (!is_wasm) {
-        const unit_tests = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/zig/parser.zig"),
-                .target = target,
-                .optimize = optimize,
-            }),
+        const unit_tests_module = b.createModule(.{
+            .root_source_file = b.path("src/zig/parser.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
         });
-        unit_tests.linkLibC();
+        const unit_tests = b.addTest(.{
+            .root_module = unit_tests_module,
+        });
 
         // Link iconv library - only needed on macOS when building natively
         // On Linux glibc, iconv is built into libc
         const is_native_macos = target.result.os.tag == .macos and target.query.isNative();
         if (is_native_macos) {
-            unit_tests.linkSystemLibrary("iconv");
+            unit_tests_module.linkSystemLibrary("iconv", .{});
         }
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
@@ -42,24 +43,23 @@ pub fn build(b: *std.Build) void {
 
 /// Build native shared library
 fn buildNative(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+    const lib_module = b.createModule(.{
+        .root_source_file = b.path("src/zig/parser.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
     const lib = b.addLibrary(.{
         .name = "turbocsv",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/zig/parser.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = lib_module,
         .linkage = .dynamic,
     });
-
-    // Link libc for basic C support
-    lib.linkLibC();
 
     // Link iconv library on macOS (required for character encoding support)
     // On Linux (glibc), iconv is built into libc
     const target_os = target.result.os.tag;
     if (target_os == .macos) {
-        lib.linkSystemLibrary("iconv");
+        lib_module.linkSystemLibrary("iconv", .{});
     }
 
     // Install the library

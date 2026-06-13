@@ -9,7 +9,7 @@ export default function App() {
     <Router
       root={(props) => (
         <MetaProvider>
-          <Title>TurboCSV - High-performance CSV parser with SIMD acceleration</Title>
+          <Title>TurboCSV - Fast CSV parsing with Zig, SIMD, and Fast Mode</Title>
           <Link rel="preconnect" href="https://fonts.googleapis.com" />
           <Link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
           <Link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&display=swap" rel="stylesheet" />

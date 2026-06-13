@@ -1,5 +1,9 @@
 const std = @import("std");
 
+fn defaultIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// CSV Writer configuration
 pub const WriterConfig = struct {
     delimiter: u8 = ',',
@@ -26,7 +30,7 @@ pub const Writer = struct {
     config: WriterConfig,
 
     // Output destination
-    file: ?std.fs.File,
+    file: ?std.Io.File,
     buffer: std.ArrayList(u8),
 
     // State tracking
@@ -38,14 +42,15 @@ pub const Writer = struct {
 
     /// Initialize writer to file
     pub fn initToFile(allocator: std.mem.Allocator, path: []const u8, config: WriterConfig) !*Self {
-        const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+        const io = defaultIo();
+        const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
 
         const writer = try allocator.create(Self);
         writer.* = Self{
             .allocator = allocator,
             .config = config,
             .file = file,
-            .buffer = std.ArrayList(u8).init(allocator),
+            .buffer = .empty,
             .rows_written = 0,
             .rows_in_buffer = 0,
             .bytes_written = 0,
@@ -61,7 +66,7 @@ pub const Writer = struct {
             .allocator = allocator,
             .config = config,
             .file = null,
-            .buffer = std.ArrayList(u8).init(allocator),
+            .buffer = .empty,
             .rows_written = 0,
             .rows_in_buffer = 0,
             .bytes_written = 0,
@@ -74,15 +79,15 @@ pub const Writer = struct {
     pub fn writeRow(self: *Self, fields: []const []const u8) !void {
         for (fields, 0..) |field, i| {
             if (i > 0) {
-                try self.buffer.append(self.config.delimiter);
+                try self.buffer.append(self.allocator, self.config.delimiter);
             }
             try self.writeField(field);
         }
 
         // Write line ending
         switch (self.config.line_ending) {
-            .lf => try self.buffer.append('\n'),
-            .crlf => try self.buffer.appendSlice("\r\n"),
+            .lf => try self.buffer.append(self.allocator, '\n'),
+            .crlf => try self.buffer.appendSlice(self.allocator, "\r\n"),
         }
 
         self.rows_in_buffer += 1;
@@ -98,19 +103,19 @@ pub const Writer = struct {
         const needs_quote = self.fieldNeedsQuoting(field);
 
         if (needs_quote or self.config.quote_style == .all) {
-            try self.buffer.append(self.config.quote_char);
+            try self.buffer.append(self.allocator, self.config.quote_char);
 
             for (field) |byte| {
                 if (byte == self.config.quote_char) {
                     // Escape quote by doubling
-                    try self.buffer.append(self.config.quote_char);
+                    try self.buffer.append(self.allocator, self.config.quote_char);
                 }
-                try self.buffer.append(byte);
+                try self.buffer.append(self.allocator, byte);
             }
 
-            try self.buffer.append(self.config.quote_char);
+            try self.buffer.append(self.allocator, self.config.quote_char);
         } else {
-            try self.buffer.appendSlice(field);
+            try self.buffer.appendSlice(self.allocator, field);
         }
     }
 
@@ -131,7 +136,7 @@ pub const Writer = struct {
     /// Flush buffer to file
     pub fn flush(self: *Self) !void {
         if (self.file) |file| {
-            try file.writeAll(self.buffer.items);
+            try file.writeStreamingAll(defaultIo(), self.buffer.items);
             self.bytes_written += self.buffer.items.len;
         }
 
@@ -157,23 +162,25 @@ pub const Writer = struct {
 
         // Close file if writing to file
         if (self.file) |file| {
-            file.close();
+            file.close(defaultIo());
         }
     }
 
     pub fn deinit(self: *Self) void {
         self.close() catch {};
-        self.buffer.deinit();
+        self.buffer.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 };
 
 /// Modifications tracker for copy-on-write
 pub const ModificationLog = struct {
+    const CellKey = struct { row: usize, col: usize };
+
     allocator: std.mem.Allocator,
 
     /// Cell modifications: (row, col) -> new_value
-    cell_edits: std.AutoHashMap(struct { row: usize, col: usize }, []const u8),
+    cell_edits: std.AutoHashMap(CellKey, []const u8),
 
     /// Deleted row indices
     deleted_rows: std.AutoHashMap(usize, void),
@@ -187,7 +194,7 @@ pub const ModificationLog = struct {
         const log = try allocator.create(Self);
         log.* = Self{
             .allocator = allocator,
-            .cell_edits = std.AutoHashMap(struct { row: usize, col: usize }, []const u8).init(allocator),
+            .cell_edits = std.AutoHashMap(CellKey, []const u8).init(allocator),
             .deleted_rows = std.AutoHashMap(usize, void).init(allocator),
             .inserted_rows = std.AutoHashMap(usize, []const []const u8).init(allocator),
         };
@@ -264,7 +271,7 @@ pub const ModificationLog = struct {
 // FFI Exports
 // ============================================================================
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa: std.heap.DebugAllocator(.{}) = .init;
 const ffi_allocator = gpa.allocator();
 
 /// Create writer to file

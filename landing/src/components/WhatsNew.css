@@ -18,9 +18,17 @@
   gap: 1.25rem;
 }
 
+.current-grid {
+  margin-bottom: 2.5rem;
+}
+
 @media (min-width: 640px) {
   .whats-new-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .current-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
@@ -33,6 +41,10 @@
 }
 
 .whats-new-card:hover {
+  border-color: var(--ds-gray-500);
+}
+
+.current-card {
   border-color: var(--ds-gray-500);
 }
 
@@ -114,6 +126,10 @@
   font-size: 1.2rem;
   margin-bottom: 0.5rem;
   color: var(--text-secondary);
+}
+
+.release-title {
+  margin-top: 0;
 }
 
 @keyframes fadeIn {

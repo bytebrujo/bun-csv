@@ -40,7 +40,7 @@ pub const ParsedRow = struct {
 pub const ChunkResult = struct {
     chunk_id: usize,
     start_row_index: usize,
-    rows: std.ArrayListUnmanaged(ParsedRow),
+    rows: std.ArrayList(ParsedRow),
     err_msg: ?[]const u8,
     bytes_processed: usize,
 
@@ -132,12 +132,11 @@ pub const ChunkProcessor = struct {
 
     // Thread management
     thread_pool: ?[]std.Thread,
-    results: std.ArrayListUnmanaged(ChunkResult),
+    results: std.ArrayList(ChunkResult),
     chunks: []ChunkBoundary,
 
     // Synchronization
-    mutex: std.Thread.Mutex,
-    results_ready: std.Thread.Condition,
+    mutex: std.Io.Mutex,
     completed_count: usize,
 
     // Reorder buffer
@@ -156,10 +155,9 @@ pub const ChunkProcessor = struct {
             .config = config,
             .data = data,
             .thread_pool = null,
-            .results = .{},
+            .results = .empty,
             .chunks = &.{},
-            .mutex = .{},
-            .results_ready = .{},
+            .mutex = .init,
             .completed_count = 0,
             .reorder_buffer = ReorderBuffer.init(allocator, data, config.max_buffer_rows),
             .total_rows_parsed = 0,
@@ -194,7 +192,7 @@ pub const ChunkProcessor = struct {
         const thread_count = self.getOptimalThreadCount();
         const target_chunk_size = @max(self.data.len / thread_count, self.config.min_chunk_size);
 
-        var chunks_list: std.ArrayListUnmanaged(ChunkBoundary) = .{};
+        var chunks_list: std.ArrayList(ChunkBoundary) = .empty;
         var chunk_id: usize = 0;
         var pos: usize = 0;
         var estimated_row: usize = 0;
@@ -301,23 +299,21 @@ pub const ChunkProcessor = struct {
             const error_result = ChunkResult{
                 .chunk_id = chunk.id,
                 .start_row_index = chunk.estimated_start_row,
-                .rows = .{},
+                .rows = .empty,
                 .err_msg = std.fmt.allocPrint(self.allocator, "Chunk {} error: {}", .{ chunk.id, err }) catch null,
                 .bytes_processed = 0,
             };
-            self.mutex.lock();
+            std.Io.Threaded.mutexLock(&self.mutex);
             self.results.append(self.allocator, error_result) catch {};
             self.completed_count += 1;
-            self.mutex.unlock();
-            self.results_ready.signal();
+            std.Io.Threaded.mutexUnlock(&self.mutex);
             return;
         };
 
-        self.mutex.lock();
+        std.Io.Threaded.mutexLock(&self.mutex);
         self.results.append(self.allocator, result) catch {};
         self.completed_count += 1;
-        self.mutex.unlock();
-        self.results_ready.signal();
+        std.Io.Threaded.mutexUnlock(&self.mutex);
     }
 
     /// Process a single chunk and return parsed rows
@@ -325,7 +321,7 @@ pub const ChunkProcessor = struct {
         var result = ChunkResult{
             .chunk_id = chunk.id,
             .start_row_index = chunk.estimated_start_row,
-            .rows = .{},
+            .rows = .empty,
             .err_msg = null,
             .bytes_processed = 0,
         };
@@ -336,7 +332,7 @@ pub const ChunkProcessor = struct {
         var in_quote = false;
 
         while (pos < chunk_data.len) {
-            var fields: std.ArrayListUnmanaged(FieldLoc) = .{};
+            var fields: std.ArrayList(FieldLoc) = .empty;
             var field_start = pos;
             const row_start = pos;
 
@@ -542,15 +538,14 @@ test "single chunk processing" {
 test "parallel processing preserves order" {
     // Create larger test data
     var buffer: [4096]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var writer: std.Io.Writer = .fixed(&buffer);
 
     writer.writeAll("id,value\n") catch unreachable;
     for (0..50) |i| {
         writer.print("{d},test{d}\n", .{ i, i }) catch unreachable;
     }
 
-    const data = stream.getWritten();
+    const data = writer.buffered();
     const processor = try ChunkProcessor.init(std.testing.allocator, data, .{ .min_chunk_size = 100 });
     defer processor.deinit();
 

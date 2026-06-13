@@ -1043,7 +1043,18 @@ export class CSVParser<T = Record<string, string>>
       while (lib.csv_next_row(this.handle)) {
         if (!this.cachedRows.has(rowIndex)) {
           const fieldCount = lib.csv_get_field_count(this.handle);
-          const row = new CSVRow<T>(this.handle, fieldCount, this.headers, this.options.schema ?? null);
+          const row = new CSVRow<T>(
+            this.handle,
+            fieldCount,
+            this.headers,
+            this.options.schema ?? null,
+            false,
+            null,
+            null,
+            0,
+            null,
+            this.headerRow
+          );
 
           const rowData: string[] = [];
           for (let i = 0; i < fieldCount; i++) {
@@ -1170,7 +1181,13 @@ export class CSVParser<T = Record<string, string>>
         this.handle,
         fieldCount,
         this.headers,
-        this.options.schema ?? null
+        this.options.schema ?? null,
+        false,
+        null,
+        null,
+        0,
+        null,
+        this.headerRow
       );
 
       const data = this.headers ? row.toObject() : row.toArray();
@@ -1198,7 +1215,13 @@ export class CSVParser<T = Record<string, string>>
         this.handle,
         fieldCount,
         this.headers,
-        this.options.schema ?? null
+        this.options.schema ?? null,
+        false,
+        null,
+        null,
+        0,
+        null,
+        this.headerRow
       );
 
       chunk.push(this.headers ? row.toObject() : row.toArray());
@@ -1432,6 +1455,7 @@ export class CSVParser<T = Record<string, string>>
         trimConfig,
         this.dataRowIndex,
         this.options.cast ?? null,
+        this.headerRow,
       );
 
       // Skip records with all empty values
@@ -1532,7 +1556,18 @@ export class CSVParser<T = Record<string, string>>
 
       // onRecord callback: extract fields, allow modification or skipping
       if (this.options.onRecord) {
-        const rawRow = new CSVRow<T>(this.handle, fieldCount, this.headers, this.options.schema ?? null);
+        const rawRow = new CSVRow<T>(
+          this.handle,
+          fieldCount,
+          this.headers,
+          this.options.schema ?? null,
+          false,
+          null,
+          null,
+          0,
+          null,
+          this.headerRow
+        );
         const fields: (string | null)[] = [];
         for (let i = 0; i < fieldCountNum; i++) {
           fields.push(rawRow.get(i));
@@ -1555,6 +1590,7 @@ export class CSVParser<T = Record<string, string>>
           trimConfig,
           this.dataRowIndex,
           this.options.cast ?? null,
+          this.headerRow,
         );
 
         if (skipEmptyValues && this.isRowEmpty(row, result.length, greedyEmpty)) {
@@ -1581,6 +1617,7 @@ export class CSVParser<T = Record<string, string>>
         trimConfig,
         this.dataRowIndex,
         this.options.cast ?? null,
+        this.headerRow,
       );
 
       // Skip records with all empty values (greedy checks after trim)
@@ -1672,7 +1709,18 @@ export class CSVParser<T = Record<string, string>>
 
       // onRecord callback: extract fields, allow modification or skipping
       if (this.options.onRecord) {
-        const rawRow = new CSVRow<T>(this.handle, fieldCount, this.headers, this.options.schema ?? null);
+        const rawRow = new CSVRow<T>(
+          this.handle,
+          fieldCount,
+          this.headers,
+          this.options.schema ?? null,
+          false,
+          null,
+          null,
+          0,
+          null,
+          this.headerRow
+        );
         const fields: (string | null)[] = [];
         for (let i = 0; i < fieldCountNum; i++) {
           fields.push(rawRow.get(i));
@@ -1694,6 +1742,7 @@ export class CSVParser<T = Record<string, string>>
           trimConfig,
           this.dataRowIndex,
           this.options.cast ?? null,
+          this.headerRow,
         );
 
         if (skipEmptyValues && this.isRowEmpty(row, result.length, greedyEmpty)) {
@@ -1725,6 +1774,7 @@ export class CSVParser<T = Record<string, string>>
         trimConfig,
         this.dataRowIndex,
         this.options.cast ?? null,
+        this.headerRow,
       );
 
       // Skip records with all empty values (greedy checks after trim)

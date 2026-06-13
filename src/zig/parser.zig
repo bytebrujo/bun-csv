@@ -12,6 +12,10 @@ const parallel = if (is_wasm) @import("parallel_stub.zig") else @import("paralle
 
 const Allocator = std.mem.Allocator;
 
+fn defaultIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// Opaque handle for FFI - hides internal Parser struct from JS
 pub const ParserHandle = *anyopaque;
 
@@ -71,7 +75,7 @@ pub const Parser = struct {
     // Memory mapped file data
     data: []const u8,
     data_len: usize,
-    file_handle: ?std.fs.File,
+    file_handle: ?std.Io.File,
     mapped_file: ?mmap.MappedFile,
 
     // Current parsing state
@@ -80,7 +84,7 @@ pub const Parser = struct {
     in_quote: bool,
 
     // Field index for current row
-    field_offsets: std.ArrayListUnmanaged(FieldLocation),
+    field_offsets: std.ArrayList(FieldLocation),
 
     // SIMD scanner for accelerated parsing
     simd_scanner: simd.SimdScanner,
@@ -102,17 +106,18 @@ pub const Parser = struct {
     // State flags
     is_paused: bool,
     is_closed: bool,
-    file_mtime: i128,
+    file_mtime: std.Io.Timestamp,
     file_size: u64,
 
     const Self = @This();
 
     /// Initialize parser from file path
     pub fn initFromFile(allocator: Allocator, path: []const u8, config: ParserConfig) !*Self {
-        const file = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
-        errdefer file.close();
+        const io = defaultIo();
+        const file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
+        errdefer file.close(io);
 
-        const stat = try file.stat();
+        const stat = try file.stat(io);
         const file_size = stat.size;
         const mtime = stat.mtime;
 
@@ -165,7 +170,7 @@ pub const Parser = struct {
             .cursor = 0,
             .current_row = 0,
             .in_quote = false,
-            .field_offsets = .{},
+            .field_offsets = .empty,
             .simd_scanner = simd.SimdScanner.init(config.delimiter, config.quote_char),
             .string_cache = std.StringHashMap([]const u8).init(allocator),
             .cache_size = 0,
@@ -238,7 +243,7 @@ pub const Parser = struct {
             .cursor = 0,
             .current_row = 0,
             .in_quote = false,
-            .field_offsets = .{},
+            .field_offsets = .empty,
             .simd_scanner = simd.SimdScanner.init(config.delimiter, config.quote_char),
             .string_cache = std.StringHashMap([]const u8).init(allocator),
             .cache_size = 0,
@@ -256,7 +261,7 @@ pub const Parser = struct {
             },
             .is_paused = false,
             .is_closed = false,
-            .file_mtime = 0,
+            .file_mtime = .zero,
             .file_size = data.len,
         };
 
@@ -401,8 +406,8 @@ pub const Parser = struct {
     /// Check if file was modified externally
     pub fn checkFileModified(self: *Self) bool {
         if (self.file_handle) |file| {
-            const stat = file.stat() catch return true;
-            return stat.mtime != self.file_mtime or stat.size != self.file_size;
+            const stat = file.stat(defaultIo()) catch return true;
+            return stat.mtime.nanoseconds != self.file_mtime.nanoseconds or stat.size != self.file_size;
         }
         return false;
     }
@@ -438,7 +443,7 @@ pub const Parser = struct {
             }
         }
         if (self.file_handle) |file| {
-            file.close();
+            file.close(defaultIo());
         }
 
         self.is_closed = true;
@@ -500,7 +505,7 @@ pub const Parser = struct {
 // FFI Exports (C ABI)
 // ============================================================================
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa: std.heap.DebugAllocator(.{}) = .init;
 const global_allocator = gpa.allocator();
 
 /// Initialize parser from file path
@@ -1126,27 +1131,27 @@ export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
         json_parse_buffer = null;
     }
 
-    // Use ArrayListUnmanaged for dynamic JSON building
-    var json: std.ArrayListUnmanaged(u8) = .{};
+    // Build JSON output incrementally.
+    var json: std.ArrayList(u8) = .empty;
     defer json.deinit(global_allocator);
 
     // Start array
-    json.append(global_allocator,'[') catch return null;
+    json.append(global_allocator, '[') catch return null;
 
     var first_row = true;
     while (parser.nextRow()) {
         if (!first_row) {
-            json.append(global_allocator,',') catch return null;
+            json.append(global_allocator, ',') catch return null;
         }
         first_row = false;
 
         // Start row array
-        json.append(global_allocator,'[') catch return null;
+        json.append(global_allocator, '[') catch return null;
 
         var first_field = true;
         for (parser.field_offsets.items) |field| {
             if (!first_field) {
-                json.append(global_allocator,',') catch return null;
+                json.append(global_allocator, ',') catch return null;
             }
             first_field = false;
 
@@ -1154,10 +1159,10 @@ export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
 
             if (field_data.len == 0) {
                 // Empty field -> null
-                json.appendSlice(global_allocator,"null") catch return null;
+                json.appendSlice(global_allocator, "null") catch return null;
             } else if (field.needs_unescape and field_data.len >= 2 and field_data[0] == parser.config.quote_char) {
                 // Quoted field - unescape and write as JSON string
-                json.append(global_allocator,'"') catch return null;
+                json.append(global_allocator, '"') catch return null;
 
                 const inner = field_data[1 .. field_data.len - 1];
                 var j: usize = 0;
@@ -1165,74 +1170,74 @@ export fn csv_parse_all_json(handle: ParserHandle) ?[*]const u8 {
                     const c = inner[j];
                     if (c == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
                         // Escaped quote "" -> "
-                        json.append(global_allocator,'"') catch return null;
+                        json.append(global_allocator, '"') catch return null;
                         j += 2;
                     } else if (c == '"') {
                         // Escape quote for JSON
-                        json.appendSlice(global_allocator,"\\\"") catch return null;
+                        json.appendSlice(global_allocator, "\\\"") catch return null;
                         j += 1;
                     } else if (c == '\\') {
-                        json.appendSlice(global_allocator,"\\\\") catch return null;
+                        json.appendSlice(global_allocator, "\\\\") catch return null;
                         j += 1;
                     } else if (c == '\n') {
-                        json.appendSlice(global_allocator,"\\n") catch return null;
+                        json.appendSlice(global_allocator, "\\n") catch return null;
                         j += 1;
                     } else if (c == '\r') {
-                        json.appendSlice(global_allocator,"\\r") catch return null;
+                        json.appendSlice(global_allocator, "\\r") catch return null;
                         j += 1;
                     } else if (c == '\t') {
-                        json.appendSlice(global_allocator,"\\t") catch return null;
+                        json.appendSlice(global_allocator, "\\t") catch return null;
                         j += 1;
                     } else if (c < 0x20) {
                         // Control character - use unicode escape
-                        json.appendSlice(global_allocator,"\\u00") catch return null;
+                        json.appendSlice(global_allocator, "\\u00") catch return null;
                         const hex = "0123456789abcdef";
-                        json.append(global_allocator,hex[c >> 4]) catch return null;
-                        json.append(global_allocator,hex[c & 0xf]) catch return null;
+                        json.append(global_allocator, hex[c >> 4]) catch return null;
+                        json.append(global_allocator, hex[c & 0xf]) catch return null;
                         j += 1;
                     } else {
-                        json.append(global_allocator,c) catch return null;
+                        json.append(global_allocator, c) catch return null;
                         j += 1;
                     }
                 }
 
-                json.append(global_allocator,'"') catch return null;
+                json.append(global_allocator, '"') catch return null;
             } else {
                 // Unquoted field - write as JSON string with escaping
-                json.append(global_allocator,'"') catch return null;
+                json.append(global_allocator, '"') catch return null;
 
                 for (field_data) |c| {
                     if (c == '"') {
-                        json.appendSlice(global_allocator,"\\\"") catch return null;
+                        json.appendSlice(global_allocator, "\\\"") catch return null;
                     } else if (c == '\\') {
-                        json.appendSlice(global_allocator,"\\\\") catch return null;
+                        json.appendSlice(global_allocator, "\\\\") catch return null;
                     } else if (c == '\n') {
-                        json.appendSlice(global_allocator,"\\n") catch return null;
+                        json.appendSlice(global_allocator, "\\n") catch return null;
                     } else if (c == '\r') {
-                        json.appendSlice(global_allocator,"\\r") catch return null;
+                        json.appendSlice(global_allocator, "\\r") catch return null;
                     } else if (c == '\t') {
-                        json.appendSlice(global_allocator,"\\t") catch return null;
+                        json.appendSlice(global_allocator, "\\t") catch return null;
                     } else if (c < 0x20) {
-                        json.appendSlice(global_allocator,"\\u00") catch return null;
+                        json.appendSlice(global_allocator, "\\u00") catch return null;
                         const hex = "0123456789abcdef";
-                        json.append(global_allocator,hex[c >> 4]) catch return null;
-                        json.append(global_allocator,hex[c & 0xf]) catch return null;
+                        json.append(global_allocator, hex[c >> 4]) catch return null;
+                        json.append(global_allocator, hex[c & 0xf]) catch return null;
                     } else {
-                        json.append(global_allocator,c) catch return null;
+                        json.append(global_allocator, c) catch return null;
                     }
                 }
 
-                json.append(global_allocator,'"') catch return null;
+                json.append(global_allocator, '"') catch return null;
             }
         }
 
         // End row array
-        json.append(global_allocator,']') catch return null;
+        json.append(global_allocator, ']') catch return null;
     }
 
     // End array and null terminate
-    json.append(global_allocator,']') catch return null;
-    json.append(global_allocator,0) catch return null;
+    json.append(global_allocator, ']') catch return null;
+    json.append(global_allocator, 0) catch return null;
 
     // Transfer ownership to static buffer
     json_parse_buffer = json.toOwnedSlice(global_allocator) catch return null;
@@ -1280,7 +1285,7 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
     }
 
     // Build output buffer
-    var output: std.ArrayListUnmanaged(u8) = .{};
+    var output: std.ArrayList(u8) = .empty;
     defer output.deinit(global_allocator);
 
     var row_count: u32 = 0;
@@ -1289,7 +1294,7 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
     while (parser.nextRow()) {
         if (!first_row) {
             // Row separator
-            output.append(global_allocator,0x01) catch return null;
+            output.append(global_allocator, 0x01) catch return null;
         }
         first_row = false;
         row_count += 1;
@@ -1298,7 +1303,7 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
         for (parser.field_offsets.items) |field| {
             if (!first_field) {
                 // Field separator
-                output.append(global_allocator,0x00) catch return null;
+                output.append(global_allocator, 0x00) catch return null;
             }
             first_field = false;
 
@@ -1311,16 +1316,16 @@ export fn csv_parse_all_fast(handle: ParserHandle) ?[*]const u8 {
                 while (j < inner.len) {
                     const c = inner[j];
                     if (c == parser.config.quote_char and j + 1 < inner.len and inner[j + 1] == parser.config.quote_char) {
-                        output.append(global_allocator,parser.config.quote_char) catch return null;
+                        output.append(global_allocator, parser.config.quote_char) catch return null;
                         j += 2;
                     } else {
-                        output.append(global_allocator,c) catch return null;
+                        output.append(global_allocator, c) catch return null;
                         j += 1;
                     }
                 }
             } else {
                 // Copy directly
-                output.appendSlice(global_allocator,field_data) catch return null;
+                output.appendSlice(global_allocator, field_data) catch return null;
             }
         }
     }

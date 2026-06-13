@@ -29,7 +29,7 @@ export default function Hero() {
         </p>
 
         <p class="subtitle">
-          Built with Zig for native performance. Now with Fast Mode, security hardening, and 22 CLI flags.
+          Built with Zig for native performance. Fast Mode now leads the benchmark suite for clean CSV data.
         </p>
 
         <div class="install-box">
@@ -54,17 +54,17 @@ export default function Hero() {
 
         <div class="stats">
           <div class="stat">
-            <span class="stat-value">269 MB/s</span>
-            <span class="stat-label">Peak throughput</span>
+            <span class="stat-value">177 MB/s</span>
+            <span class="stat-label">Fast Mode throughput</span>
           </div>
           <div class="stat-divider"></div>
           <div class="stat">
-            <span class="stat-value">5.8x</span>
-            <span class="stat-label">faster than fast-csv</span>
+            <span class="stat-value">1.79x</span>
+            <span class="stat-label">faster than PapaParse</span>
           </div>
           <div class="stat-divider"></div>
           <div class="stat">
-            <span class="stat-value">6.35x</span>
+            <span class="stat-value">6.32x</span>
             <span class="stat-label">faster than csv-parse</span>
           </div>
         </div>

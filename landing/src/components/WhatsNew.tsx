@@ -1,6 +1,36 @@
 import { For, createSignal } from "solid-js";
 import "./WhatsNew.css";
 
+const currentFeatures = [
+  {
+    title: "Benchmark Clarity",
+    features: [
+      <><code>bun run benchmark</code> restored with generated sample files</>,
+      <><code>benchmark:compare</code> now reports native and Fast Mode separately</>,
+      "Benchmarks now time file reads for JavaScript parsers too",
+      "Fast Mode leads the simple CSV benchmark suite",
+    ],
+  },
+  {
+    title: "Zig 0.16 Ready",
+    features: [
+      "Build script migrated to current module-level linking APIs",
+      <><code>std.Io</code> file APIs replace deprecated filesystem calls</>,
+      <><code>DebugAllocator</code> replaces the old general-purpose allocator</>,
+      <><code>ArrayList</code> usage updated for allocator-explicit methods</>,
+    ],
+  },
+  {
+    title: "Runtime Polish",
+    features: [
+      "Row metadata now reuses parser header arrays instead of copying per row",
+      "Parallel parser synchronization updated for Zig 0.16",
+      "Focused unit tests can generate fixtures in clean checkouts",
+      "Native build and Zig test suite pass on the current toolchain",
+    ],
+  },
+];
+
 const v3Features = [
   {
     title: "Security & Validation",
@@ -71,9 +101,29 @@ export default function WhatsNew() {
   return (
     <section class="whats-new" id="whats-new">
       <div class="container">
-        <h2>What's New in v0.3.0</h2>
+        <h2>What's New in v0.3.4</h2>
         <p class="whats-new-subtitle">
-          Major feature release — 22 new CLI flags, security hardening, Fast Mode, and robust error handling.
+          Current toolchain support, clearer benchmarks, and Fast Mode performance visibility.
+        </p>
+
+        <div class="whats-new-grid current-grid">
+          <For each={currentFeatures}>
+            {(group) => (
+              <div class="whats-new-card current-card">
+                <h3>{group.title}</h3>
+                <ul class="whats-new-list">
+                  <For each={group.features}>
+                    {(feature) => <li>{feature}</li>}
+                  </For>
+                </ul>
+              </div>
+            )}
+          </For>
+        </div>
+
+        <h3 class="v2-title release-title">Previously in v0.3.0</h3>
+        <p class="whats-new-subtitle">
+          Major feature release — 22 CLI flags, security hardening, Fast Mode, and robust error handling.
         </p>
 
         <div class="whats-new-grid">

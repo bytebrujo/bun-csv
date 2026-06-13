@@ -92,7 +92,7 @@ pub const DataFrame = struct {
     column_map: std.StringHashMap(usize),
 
     /// Row references (indices into source data)
-    rows: std.ArrayListUnmanaged(RowRef),
+    rows: std.ArrayList(RowRef),
 
     /// Reference to original parser data
     source_data: []const u8,
@@ -108,7 +108,7 @@ pub const DataFrame = struct {
             .allocator = allocator,
             .columns = &.{},
             .column_map = std.StringHashMap(usize).init(allocator),
-            .rows = .{},
+            .rows = .empty,
             .source_data = source_data,
             .owns_source = false,
         };
@@ -425,14 +425,14 @@ pub const DataFrame = struct {
     /// Compute median
     pub fn median(self: *Self, col_idx: usize) f64 {
         // Collect all numeric values
-        var values = std.ArrayList(f64).init(self.allocator);
-        defer values.deinit();
+        var values: std.ArrayList(f64) = .empty;
+        defer values.deinit(self.allocator);
 
         for (self.rows.items) |row| {
             if (row.getField(col_idx)) |field| {
                 const str = field.getData(self.source_data);
                 if (parseFloat(str)) |val| {
-                    values.append(val) catch continue;
+                    values.append(self.allocator, val) catch continue;
                 }
             }
         }
@@ -523,7 +523,7 @@ pub const GroupedDataFrame = struct {
     source: *DataFrame,
     group_col: usize,
     /// Map from group key (as string) to row indices
-    groups: std.StringHashMap(std.ArrayListUnmanaged(usize)),
+    groups: std.StringHashMap(std.ArrayList(usize)),
 
     const Self = @This();
 
@@ -533,7 +533,7 @@ pub const GroupedDataFrame = struct {
             .allocator = allocator,
             .source = source,
             .group_col = group_col,
-            .groups = std.StringHashMap(std.ArrayListUnmanaged(usize)).init(allocator),
+            .groups = std.StringHashMap(std.ArrayList(usize)).init(allocator),
         };
 
         // Build groups
@@ -547,7 +547,7 @@ pub const GroupedDataFrame = struct {
                     // Need to duplicate the key since it points to source data
                     const key_copy = try allocator.dupe(u8, key);
                     result.key_ptr.* = key_copy;
-                    result.value_ptr.* = .{};
+                    result.value_ptr.* = .empty;
                 }
                 try result.value_ptr.append(allocator, row_idx);
             }
@@ -725,7 +725,7 @@ pub fn joinDataFrames(
     }
 
     // Build lookup for right side
-    var right_lookup = std.StringHashMap(std.ArrayListUnmanaged(usize)).init(allocator);
+    var right_lookup = std.StringHashMap(std.ArrayList(usize)).init(allocator);
     defer {
         var it = right_lookup.iterator();
         while (it.next()) |entry| {
@@ -739,7 +739,7 @@ pub fn joinDataFrames(
             const key = field.getData(right.source_data);
             const entry = try right_lookup.getOrPut(key);
             if (!entry.found_existing) {
-                entry.value_ptr.* = .{};
+                entry.value_ptr.* = .empty;
             }
             try entry.value_ptr.append(allocator, idx);
         }
@@ -905,7 +905,7 @@ fn compareFields(a: FieldRef, b: FieldRef, col_type: ColumnType, source: []const
 // FFI Exports
 // ============================================================================
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = std.heap.DebugAllocator(.{}).init;
 const global_allocator = gpa.allocator();
 
 /// Create DataFrame from source data

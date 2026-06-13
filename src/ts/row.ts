@@ -101,6 +101,7 @@ export class CSVRow<T = Record<string, string>> {
     trimConfig: TrimConfig | null = null,
     rowIndex: number = 0,
     castConfig: CastConfig = null,
+    columns: string[] | null = headers ? Array.from(headers.keys()) : null,
   ) {
     this.handle = handle;
     this.fieldCount = fieldCount;
@@ -111,7 +112,7 @@ export class CSVRow<T = Record<string, string>> {
     this.transform = transform;
     this.trimConfig = trimConfig;
     this.index = rowIndex;
-    this.columns = headers ? Array.from(headers.keys()) : null;
+    this.columns = columns;
     this.castConfig = castConfig;
   }
 
@@ -127,6 +128,7 @@ export class CSVRow<T = Record<string, string>> {
     trimConfig: TrimConfig | null = null,
     rowIndex: number = 0,
     castConfig: CastConfig = null,
+    columns: string[] | null = headers ? Array.from(headers.keys()) : null,
   ): CSVRow<T> {
     const row = new CSVRow<T>(
       0, // no native handle
@@ -138,6 +140,7 @@ export class CSVRow<T = Record<string, string>> {
       trimConfig,
       rowIndex,
       castConfig,
+      columns,
     );
     row.preloadedFields = fields;
     return row;
