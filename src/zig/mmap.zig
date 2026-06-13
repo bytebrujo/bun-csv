@@ -6,8 +6,9 @@
 //!
 //! Usage:
 //! ```zig
-//! const file = try std.fs.cwd().openFile("data.csv", .{});
-//! const stat = try file.stat();
+//! const io = std.Io.Threaded.global_single_threaded.io();
+//! const file = try std.Io.Dir.cwd().openFile(io, "data.csv", .{});
+//! const stat = try file.stat(io);
 //! const mapped = try MappedFile.init(file, stat.size);
 //! defer mapped.deinit();
 //!
@@ -70,7 +71,7 @@ pub const MappedFile = struct {
     const Self = @This();
 
     /// Memory map a file for reading
-    pub fn init(file: std.fs.File, size: usize) !Self {
+    pub fn init(file: std.Io.File, size: usize) !Self {
         if (size == 0) {
             return error.EmptyFile;
         }
@@ -82,11 +83,11 @@ pub const MappedFile = struct {
         }
     }
 
-    fn initPosix(file: std.fs.File, size: usize) !Self {
+    fn initPosix(file: std.Io.File, size: usize) !Self {
         const mapped = try std.posix.mmap(
             null,
             size,
-            std.posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .PRIVATE },
             file.handle,
             0,
@@ -97,7 +98,7 @@ pub const MappedFile = struct {
         };
     }
 
-    fn initWindows(file: std.fs.File, size: usize) !Self {
+    fn initWindows(file: std.Io.File, size: usize) !Self {
         // Create file mapping
         const file_mapping = win32.CreateFileMappingW(
             file.handle,

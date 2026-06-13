@@ -83,13 +83,17 @@ parser.close();`,
   },
   {
     id: "cli",
-    label: "CLI (v0.3.0)",
+    label: "CLI & Benchmarks",
     lang: "bash",
     code: `# Trim whitespace and skip bad rows
 turbocsv head --trim --skip-errors data.csv
 
 # Fast mode with dynamic typing
 turbocsv head --fast --dynamic-typing --format json data.csv
+
+# Run local benchmarks
+bun run benchmark
+bun run benchmark:compare
 
 # Validate with structured error reporting
 turbocsv validate data.csv
